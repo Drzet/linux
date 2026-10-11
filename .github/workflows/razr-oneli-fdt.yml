@@ -22,7 +22,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: Drzet/razr2022_nuc
-          ref: ceb102384214cbaa714e9ebf88765fe97f786ea4
+          ref: 908fd4a21416c555261856d0e4fdf80d0c34f794
           path: project-audit
           persist-credentials: false
       - name: Build and inspect exact oneli DTB
