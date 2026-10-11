@@ -8,6 +8,17 @@
 
 #include <drm/bridge/aux-bridge.h>
 
+#include <linux/bitops.h>
+#include <linux/errno.h>
+#include <linux/gpio/consumer.h>
+#include <linux/kernel.h>
+#include <linux/module.h>
+#include <linux/mutex.h>
+#include <linux/property.h>
+#include <linux/regulator/consumer.h>
+#include <linux/slab.h>
+#include <linux/types.h>
+#include <linux/usb/typec.h>
 #include <linux/i2c.h>
 #include <linux/regmap.h>
 
