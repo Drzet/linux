@@ -86,8 +86,94 @@
 };
 
 /*
+ * GPU OPPs for Motorola Cape / SM8475.
+ *
+ * The inherited SM8450 table has twelve entries. Ten frequencies are
+ * SM8450-only, while the 220 MHz child also has a different voltage
+ * corner. Remove the old entries before merging the thirteen Motorola
+ * frequencies. Keep GPU disabled until GMU/CX vote mapping and signed
+ * board firmware have been validated.
+ *
+ * Source: MotorolaMobilityLLC/kernel-devicetree
+ * 90fa7be1db5bd47202673d4431408659149a7359 qcom/cape-gpu.dtsi
+ * Proposed by GPU owner: Drzet/razr2022_nuc issue #4.
+ * [INFERRED] Translating Motorola's GPU qcom,level to the upstream
+ * RPMh opp-level is suitable; distinct CX votes are not represented.
+ */
+&gpu {
+	compatible = "qcom,adreno-730.2", "qcom,adreno";
+	status = "disabled";
+};
+
+&gpu_opp_table {
+	/delete-node/ opp-818000000;
+	/delete-node/ opp-791000000;
+	/delete-node/ opp-734000000;
+	/delete-node/ opp-640000000;
+	/delete-node/ opp-599000000;
+	/delete-node/ opp-545000000;
+	/delete-node/ opp-492000000;
+	/delete-node/ opp-421000000;
+	/delete-node/ opp-350000000;
+	/delete-node/ opp-317000000;
+
+	opp-900000000 {
+		opp-hz = /bits/ 64 <900000000>;
+		opp-level = <RPMH_REGULATOR_LEVEL_TURBO_L1>;
+	};
+	opp-862000000 {
+		opp-hz = /bits/ 64 <862000000>;
+		opp-level = <RPMH_REGULATOR_LEVEL_TURBO>;
+	};
+	opp-815000000 {
+		opp-hz = /bits/ 64 <815000000>;
+		opp-level = <RPMH_REGULATOR_LEVEL_NOM_L1>;
+	};
+	opp-765000000 {
+		opp-hz = /bits/ 64 <765000000>;
+		opp-level = <RPMH_REGULATOR_LEVEL_NOM>;
+	};
+	opp-710000000 {
+		opp-hz = /bits/ 64 <710000000>;
+		opp-level = <RPMH_REGULATOR_LEVEL_SVS_L2>;
+	};
+	opp-645000000 {
+		opp-hz = /bits/ 64 <645000000>;
+		opp-level = <RPMH_REGULATOR_LEVEL_SVS_L1>;
+	};
+	opp-580000000 {
+		opp-hz = /bits/ 64 <580000000>;
+		opp-level = <RPMH_REGULATOR_LEVEL_SVS_L0>;
+	};
+	opp-515000000 {
+		opp-hz = /bits/ 64 <515000000>;
+		opp-level = <RPMH_REGULATOR_LEVEL_SVS>;
+	};
+	opp-439000000 {
+		opp-hz = /bits/ 64 <439000000>;
+		opp-level = <RPMH_REGULATOR_LEVEL_LOW_SVS_L2>;
+	};
+	opp-364000000 {
+		opp-hz = /bits/ 64 <364000000>;
+		opp-level = <RPMH_REGULATOR_LEVEL_LOW_SVS_L1>;
+	};
+	opp-324000000 {
+		opp-hz = /bits/ 64 <324000000>;
+		opp-level = <RPMH_REGULATOR_LEVEL_LOW_SVS>;
+	};
+	opp-285000000 {
+		opp-hz = /bits/ 64 <285000000>;
+		opp-level = <RPMH_REGULATOR_LEVEL_LOW_SVS_D1>;
+	};
+	opp-220000000 {
+		opp-hz = /bits/ 64 <220000000>;
+		opp-level = <RPMH_REGULATOR_LEVEL_MIN_SVS>;
+	};
+};
+
+/*
  * Deliberate deferrals:
  * - SM8475 eUSB2 PHY/repeater supplies need a separate USB handoff.
- * - The inherited SM8450 GPU OPP table must be replaced, not appended to,
- *   before enabling the GPU. The GPU is disabled in this initial board.
+ * - GPU OPPs are staged but disabled: CX votes, GMU profile and signed
+ *   Motorola firmware still require independent validation.
  */
