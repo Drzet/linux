@@ -33,11 +33,11 @@ properties:
       - const: vcodec0_core
 
   power-domains:
-    minItems: 2
+    minItems: 4
     maxItems: 4
 
   power-domain-names:
-    minItems: 2
+    minItems: 4
     items:
       - const: venus
       - const: vcodec0
@@ -56,8 +56,11 @@ properties:
       - const: cpu-cfg
       - const: video-mem
 
+  # Downstream describes separate bitstream and pixel context banks; this
+  # alone does not establish an equivalent two-endpoint upstream consumer.
+  # [INFERRED] Actual topology must be checked against the SM8475 SMMU.
   iommus:
-    minItems: 2
+    minItems: 1
     maxItems: 2
 
   resets:
@@ -79,6 +82,7 @@ required:
   - interconnects
   - interconnect-names
   - power-domain-names
+  - operating-points-v2
   - resets
   - reset-names
   - iommus
