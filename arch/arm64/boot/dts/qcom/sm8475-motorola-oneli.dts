@@ -250,3 +250,10 @@
 &usb_1_dwc3_hs {
 	remote-endpoint = <&usb_hs_connector>;
 };
+
+/* ADSP/LPASS is held for later audio bring-up. This inherited pinctrl
+ * clock consumer cannot probe before the ADSP Q6PRMCC service is enabled.
+ */
+&lpass_tlmm {
+	status = "disabled";
+};
