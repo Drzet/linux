@@ -23,6 +23,9 @@ properties:
   vcc-supply:
     description: 1.8V power supply
 
+  vio-supply:
+    description: 1.8V I/O power supply
+
   reset-gpios:
     maxItems: 1
 
@@ -117,6 +120,7 @@ required:
   - compatible
   - reg
   - vcc-supply
+  - vio-supply
   - reset-gpios
   - orientation-switch
   - retimer-switch

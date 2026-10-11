@@ -178,7 +178,7 @@ static const struct ps5169_eq_data ps5169_usb_tx_eq_data = {
 };
 
 struct redriver {
-	struct regulator *vcc;
+	struct regulator_bulk_data supplies[2];
 	struct gpio_desc *reset_gpio;
 
 	struct regmap *regmap;
@@ -437,9 +437,12 @@ static int ps5169_probe(struct i2c_client *client)
 
 	mutex_init(&ps5169->lock);
 
-	ps5169->vcc = devm_regulator_get(dev, "vcc");
-	if (IS_ERR(ps5169->vcc))
-		return dev_err_probe(dev, PTR_ERR(ps5169->vcc), "Failed to get vcc-supply\n");
+	ps5169->supplies[0].supply = "vcc";
+	ps5169->supplies[1].supply = "vio";
+	ret = devm_regulator_bulk_get(dev, ARRAY_SIZE(ps5169->supplies),
+				       ps5169->supplies);
+	if (ret)
+		return dev_err_probe(dev, ret, "Failed to get vcc/vio supplies\n");
 
 	ps5169->reset_gpio = devm_gpiod_get(dev, "reset", GPIOD_OUT_LOW);
 	if (IS_ERR(ps5169->reset_gpio))
@@ -461,7 +464,7 @@ static int ps5169_probe(struct i2c_client *client)
 		goto switch_put;
 	}
 
-	ret = regulator_enable(ps5169->vcc);
+	ret = regulator_bulk_enable(ARRAY_SIZE(ps5169->supplies), ps5169->supplies);
 	if (ret) {
 		dev_err(dev, "Failed to enable vcc-supply\n");
 		goto mux_put;
@@ -558,7 +561,7 @@ switch_unregister:
 	typec_switch_unregister(ps5169->sw);
 
 vcc_disable:
-	regulator_disable(ps5169->vcc);
+	regulator_bulk_disable(ARRAY_SIZE(ps5169->supplies), ps5169->supplies);
 
 mux_put:
 	typec_mux_put(ps5169->typec_mux);
@@ -575,7 +578,7 @@ static void ps5169_remove(struct i2c_client *client)
 	typec_retimer_unregister(ps5169->retimer);
 	typec_switch_unregister(ps5169->sw);
 
-	regulator_disable(ps5169->vcc);
+	regulator_bulk_disable(ARRAY_SIZE(ps5169->supplies), ps5169->supplies);
 
 	typec_mux_put(ps5169->typec_mux);
 	typec_switch_put(ps5169->typec_switch);
