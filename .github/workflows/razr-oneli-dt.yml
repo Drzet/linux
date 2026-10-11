@@ -49,7 +49,7 @@ jobs:
           set -o pipefail
           export ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu-
           make O=out defconfig 2>&1 | tee evidence/configure.log
-          make O=out -j"$(nproc)" arch/arm64/boot/dts/qcom/sm8475-motorola-oneli.dtb \
+          make O=out -j"$(nproc)" qcom/sm8475-motorola-oneli.dtb \
             2>&1 | tee evidence/oneli-dtb.log
 
       - name: Validate altered binding schemas
