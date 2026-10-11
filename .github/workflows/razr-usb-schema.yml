@@ -1,0 +1,49 @@
+name: Razr USB eUSB2 binding schema
+
+on:
+  push:
+    branches:
+      - razr/usb
+    paths:
+      - Documentation/devicetree/bindings/phy/qcom,snps-eusb2-phy.yaml
+      - .github/workflows/razr-usb-schema.yml
+  pull_request:
+    paths:
+      - Documentation/devicetree/bindings/phy/qcom,snps-eusb2-phy.yaml
+      - .github/workflows/razr-usb-schema.yml
+  workflow_dispatch:
+
+jobs:
+  binding:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install DT schema tooling
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y device-tree-compiler python3-venv
+          python3 -m venv .venv
+          .venv/bin/python -m pip install --disable-pip-version-check dtschema
+      - name: Validate exact binding
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p usb-ci-record
+          {
+            echo "kernel_sha=$(git rev-parse HEAD)"
+            echo "kernel_ref=$GITHUB_REF"
+            uname -a
+            dtc --version
+            .venv/bin/python -m pip freeze
+          } | tee usb-ci-record/tool-versions.txt
+          PATH="$PWD/.venv/bin:$PATH" \
+            make DT_SCHEMA_FILES=Documentation/devicetree/bindings/phy/qcom,snps-eusb2-phy.yaml dt_binding_check \
+            2>&1 | tee usb-ci-record/dt_binding_check.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: razr-usb-dt-schema-${{ github.sha }}
+          path: usb-ci-record/
