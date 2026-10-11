@@ -35,6 +35,43 @@
 	compatible = "motorola,oneli", "qcom,sm8475";
 	chassis-type = "handset";
 
+	/*
+	 * [INFERRED] Qualcomm PMIC GLINK Type-C source is the best upstream
+	 * representation of Motorola's stock dual-role firmware interface.
+	 * GPIO91 is consumed only here as an orientation input.
+	 *
+	 * USB2 port@0 stages the existing DWC3 endpoint pair. The SS lane
+	 * PS5169 and independent DP AUX/SBU switch remain intentionally
+	 * absent; the Type-C provider is not active in this bring-up tree.
+	 */
+	pmic-glink {
+		compatible = "qcom,sm8450-pmic-glink", "qcom,pmic-glink";
+		#address-cells = <1>;
+		#size-cells = <0>;
+		orientation-gpios = <&tlmm 91 GPIO_ACTIVE_HIGH>;
+		status = "disabled";
+
+		connector@0 {
+			compatible = "usb-c-connector";
+			reg = <0>;
+			power-role = "dual";
+			data-role = "dual";
+
+			ports {
+				#address-cells = <1>;
+				#size-cells = <0>;
+
+				port@0 {
+					reg = <0>;
+
+					usb_hs_connector: endpoint {
+						remote-endpoint = <&usb_1_dwc3_hs>;
+					};
+				};
+			};
+		};
+	};
+
 	aliases {
 		serial0 = &uart7;
 	};
@@ -207,4 +244,9 @@
 /* Motorola's QUP0 SE5 repeater transport; no provider bound yet. */
 &i2c5 {
 	status = "disabled";
+};
+
+/* Passive graph endpoint: the controller and PMIC GLINK stay disabled. */
+&usb_1_dwc3_hs {
+	remote-endpoint = <&usb_hs_connector>;
 };
