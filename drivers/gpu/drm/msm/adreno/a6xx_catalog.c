@@ -1478,7 +1478,8 @@ static const struct adreno_info a7xx_gpus[] = {
 			{ 142, 3 },
 		),
 	}, {
-		.chip_ids = ADRENO_CHIP_IDS(0x07030001),
+		/* SM8450 A730 and SM8475 A730v3 (Motorola cape-gpu.dtsi). */
+		.chip_ids = ADRENO_CHIP_IDS(0x07030001, 0x07030002),
 		.family = ADRENO_7XX_GEN1,
 		.fw = {
 			[ADRENO_FW_SQE] = "a730_sqe.fw",
