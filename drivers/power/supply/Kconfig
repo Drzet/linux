@@ -220,7 +220,6 @@ config BATTERY_QCOM_BATTMGR
 config BATTERY_QCOM_BATTMGR_KUNIT_TEST
 	tristate "Test Qualcomm PMIC GLINK battery temperature decoding" if !KUNIT_ALL_TESTS
 	depends on KUNIT
-	depends on BATTERY_QCOM_BATTMGR
 	default KUNIT_ALL_TESTS
 	help
 	  Run KUnit tests for the signed wire temperature conversion used
