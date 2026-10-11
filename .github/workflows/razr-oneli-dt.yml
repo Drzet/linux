@@ -1,0 +1,97 @@
+name: Razr oneli boot DT validation
+
+on:
+  push:
+    branches:
+      - razr/boot
+    paths:
+      - 'arch/arm64/boot/dts/qcom/sm8475*'
+      - 'arch/arm64/boot/dts/qcom/Makefile'
+      - 'Documentation/devicetree/bindings/arm/qcom.yaml'
+      - 'Documentation/devicetree/bindings/pinctrl/qcom,sm8450-tlmm.yaml'
+      - '.github/workflows/razr-oneli-dt.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  dt:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - name: Check out exact branch commit
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Install toolchain and DT schema utilities
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            make gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
+            bc bison flex libssl-dev libelf-dev python3 python3-venv \
+            python3-pip python3-dev libyaml-dev dtc
+          python3 -m venv /tmp/razr-dt-venv
+          /tmp/razr-dt-venv/bin/pip install dtschema
+          mkdir -p evidence
+          {
+            git rev-parse HEAD
+            aarch64-linux-gnu-gcc --version | head -n 1
+            dtc --version
+            /tmp/razr-dt-venv/bin/dt-doc-validate --version || true
+            /tmp/razr-dt-venv/bin/pip freeze
+          } > evidence/versions.txt 2>&1
+
+      - name: Compile exact oneli DTB
+        shell: bash
+        run: |
+          set -o pipefail
+          export ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu-
+          make O=out defconfig 2>&1 | tee evidence/configure.log
+          make O=out -j"$(nproc)" arch/arm64/boot/dts/qcom/sm8475-motorola-oneli.dtb \
+            2>&1 | tee evidence/oneli-dtb.log
+
+      - name: Validate altered binding schemas
+        shell: bash
+        run: |
+          set -o pipefail
+          export ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu-
+          export PATH="/tmp/razr-dt-venv/bin:$PATH"
+          make O=out DT_SCHEMA_FILES=Documentation/devicetree/bindings/arm/qcom.yaml \
+            dt_binding_check 2>&1 | tee evidence/arm-binding.log
+          make O=out DT_SCHEMA_FILES=Documentation/devicetree/bindings/pinctrl/qcom,sm8450-tlmm.yaml \
+            dt_binding_check 2>&1 | tee evidence/tlmm-binding.log
+
+      - name: Validate compiled oneli board against bindings
+        shell: bash
+        run: |
+          set -o pipefail
+          export ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu-
+          export PATH="/tmp/razr-dt-venv/bin:$PATH"
+          make O=out DT_SCHEMA_FILES=Documentation/devicetree/bindings/arm/qcom.yaml \
+            dtbs_check 2>&1 | tee evidence/arm-dtbs-check.log
+          make O=out DT_SCHEMA_FILES=Documentation/devicetree/bindings/pinctrl/qcom,sm8450-tlmm.yaml \
+            dtbs_check 2>&1 | tee evidence/tlmm-dtbs-check.log
+
+      - name: Export evidence
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p evidence
+          printf 'kernel_commit=%s\nrun_url=https://github.com/%s/actions/runs/%s\n' \
+            "$GITHUB_SHA" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" > evidence/identity.txt
+          if [ -f out/arch/arm64/boot/dts/qcom/sm8475-motorola-oneli.dtb ]; then
+            cp out/arch/arm64/boot/dts/qcom/sm8475-motorola-oneli.dtb evidence/
+          fi
+          if [ -f out/.config ]; then cp out/.config evidence/kernel.config; fi
+          (cd evidence && sha256sum * 2>/dev/null > SHA256SUMS) || true
+
+      - name: Upload logs and DTB
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: oneli-dt-${{ github.run_id }}-${{ github.run_attempt }}
+          path: evidence/
+          retention-days: 30
+          if-no-files-found: warn
