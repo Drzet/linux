@@ -17,6 +17,8 @@
 #include <linux/math.h>
 #include <linux/units.h>
 
+#include "qcom_battmgr_internal.h"
+
 #define BATTMGR_CHEMISTRY_LEN	4
 #define BATTMGR_STRING_LEN	128
 
@@ -278,7 +280,7 @@ struct qcom_battmgr_status {
 	int power_now;
 	unsigned int voltage_now;
 	unsigned int voltage_ocv;
-	unsigned int temperature;
+	int temperature;
 	unsigned int resistance;
 	unsigned int soh_percent;
 
@@ -1371,7 +1373,6 @@ static void qcom_battmgr_sm8350_callback(struct qcom_battmgr *battmgr,
 	unsigned int property;
 	unsigned int opcode = le32_to_cpu(resp->hdr.opcode);
 	size_t payload_len = len - sizeof(struct pmic_glink_hdr);
-	unsigned int val;
 
 	if (payload_len < sizeof(__le32)) {
 		dev_warn(battmgr->dev, "invalid payload length for %#x: %zd\n",
@@ -1436,8 +1437,8 @@ static void qcom_battmgr_sm8350_callback(struct qcom_battmgr *battmgr,
 			battmgr->status.current_now = le32_to_cpu(resp->intval.value);
 			break;
 		case BATT_TEMP:
-			val = le32_to_cpu(resp->intval.value);
-			battmgr->status.temperature = DIV_ROUND_CLOSEST(val, 10);
+			battmgr->status.temperature =
+				qcom_battmgr_decode_temperature(resp->intval.value);
 			break;
 		case BATT_TECHNOLOGY:
 			battmgr->info.technology = le32_to_cpu(resp->intval.value);
