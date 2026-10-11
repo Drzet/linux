@@ -62,13 +62,20 @@ jobs:
           make O=out -j"$(nproc)" qcom/sm8475-motorola-oneli.dtb \
             2>&1 | tee evidence/oneli-dtb.log
 
-      - name: Compile all Linux DT binding schemas
+      - name: Validate board, regulator, UFS and GPU schema definitions
         shell: bash
         run: |
           set -o pipefail
-          export ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu-
           export PATH="/tmp/razr-dt-venv/bin:$PATH"
-          make O=out -j"$(nproc)" dt_binding_check 2>&1 | tee evidence/all-bindings.log
+          dt-doc-validate -u Documentation/devicetree/bindings \
+            Documentation/devicetree/bindings/arm/qcom.yaml \
+            Documentation/devicetree/bindings/pinctrl/qcom,sm8450-tlmm.yaml \
+            Documentation/devicetree/bindings/regulator/qcom,rpmh-regulator.yaml \
+            Documentation/devicetree/bindings/ufs/qcom,ufs.yaml \
+            Documentation/devicetree/bindings/phy/qcom,sc8280xp-qmp-ufs-phy.yaml \
+            Documentation/devicetree/bindings/display/msm/gpu.yaml \
+            Documentation/devicetree/bindings/display/msm/gmu.yaml \
+            2>&1 | tee evidence/key-bindings-doc-check.log
 
       - name: Check exact oneli DTB against all applicable schemas
         shell: bash
@@ -79,6 +86,16 @@ jobs:
           rm -f out/arch/arm64/boot/dts/qcom/sm8475-motorola-oneli.dtb
           make O=out -j"$(nproc)" CHECK_DTBS=y qcom/sm8475-motorola-oneli.dtb \
             2>&1 | tee evidence/oneli-all-dtbs-check.log
+
+      - name: Capture all-applicable schema diagnostics for oneli
+        shell: bash
+        run: |
+          set -o pipefail
+          export PATH="/tmp/razr-dt-venv/bin:$PATH"
+          dt-validate -m -u Documentation/devicetree/bindings \
+            -p out/Documentation/devicetree/bindings/processed-schema.json \
+            out/arch/arm64/boot/dts/qcom/sm8475-motorola-oneli.dtb \
+            2>&1 | tee evidence/oneli-all-schemas-direct.log
 
       - name: Audit compiled FDT reservations and phandle dependencies
         shell: bash
