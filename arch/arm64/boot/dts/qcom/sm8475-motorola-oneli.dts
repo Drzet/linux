@@ -146,3 +146,28 @@
 				&config_noc SLAVE_QUP_0 QCOM_ICC_TAG_ALWAYS>;
 	status = "okay";
 };
+
+/*
+ * Minimal diagnostic boot does not activate LPASS audio macro endpoints.
+ * The inherited SM8450 nodes are otherwise enabled while their Q6PRMCC
+ * clock provider lives below a disabled ADSP remoteproc. None of these
+ * audio components are needed to enumerate CPU/timer/interrupt/UART.
+ *
+ * Leave them disabled until the Motorola oneli audio topology/remoteproc
+ * and coherent SoundWire/power clocks have an evidence-backed contract.
+ */
+&wsa2macro {
+	status = "disabled";
+};
+
+&rxmacro {
+	status = "disabled";
+};
+
+&txmacro {
+	status = "disabled";
+};
+
+&wsamacro {
+	status = "disabled";
+};
