@@ -6,6 +6,7 @@ on:
     paths:
       - .github/workflows/razr-ps5169-candidate.yml
       - scripts/razr/ps5169-candidate-headers.py
+      - scripts/razr/ps5169-candidate-power.py
   workflow_dispatch:
 
 jobs:
@@ -30,14 +31,27 @@ jobs:
             'https://patchew.org/linux/20260810-ps5169-bup-v3-0-a2178b2834d7@proton.me/mbox' \
             -o ps5169-ci-record/ps5169-v3.mbox
           sha256sum ps5169-ci-record/ps5169-v3.mbox | tee ps5169-ci-record/mbox-sha256.txt
+          echo '4e6a5fa83954a22f84dbb0c5b8a8bc4c2f874fe756cd96dcf5ae118cd8e19072  ps5169-ci-record/ps5169-v3.mbox' | sha256sum -c -
           git config user.email 'usb-ci@example.invalid'
           git config user.name 'USB candidate CI'
           git am --3way ps5169-ci-record/ps5169-v3.mbox
           git log -2 --format='%H %an <%ae> %s' | tee ps5169-ci-record/upstream-commits.txt
           python3 scripts/razr/ps5169-candidate-headers.py
-          git diff -- drivers/usb/typec/mux/ps5169.c | tee ps5169-ci-record/header-repair.diff
+          python3 scripts/razr/ps5169-candidate-power.py
+          git diff -- drivers/usb/typec/mux/ps5169.c | tee ps5169-ci-record/driver-candidate.diff
+          git diff -- Documentation/devicetree/bindings/usb/parade,ps5169.yaml | tee ps5169-ci-record/binding-candidate.diff
           git diff --check
           git status --short | tee ps5169-ci-record/status.txt
+      - name: Validate modified PS5169 binding
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m venv .schema-venv
+          .schema-venv/bin/python -m pip install dtschema
+          .schema-venv/bin/python -m pip freeze > ps5169-ci-record/schema-packages.txt
+          PATH="$PWD/.schema-venv/bin:$PATH" \
+            make DT_SCHEMA_FILES=Documentation/devicetree/bindings/usb/parade,ps5169.yaml dt_binding_check \
+            2>&1 | tee ps5169-ci-record/dt_binding_check.log
       - name: Build standalone candidate source object
         shell: bash
         run: |
