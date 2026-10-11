@@ -15,7 +15,32 @@
  */
 /delete-node/ &ufs_mem_phy;
 
+/*
+ * On SM8475 this address implements Synopsys eUSB2, not the SM8450
+ * USB HS 7nm PHY. Both PHYs are electrically disabled during staging.
+ * Exact source: Motorola Cape cape-usb.dtsi @
+ * 90fa7be1db5bd47202673d4431408659149a7359.
+ *
+ * [INFERRED] 0x154 register extent and RPMH_CXO_CLK as the ref input
+ * follow the peer USB2-first contract. Clock gate and NXP repeater
+ * sequencing have not been validated on oneli.
+ */
+/delete-node/ &usb_1_hsphy;
+
 &soc {
+	usb_1_hsphy: phy@88e3000 {
+		compatible = "qcom,sm8475-snps-eusb2-phy",
+			     "qcom,sm8550-snps-eusb2-phy";
+		reg = <0 0x088e3000 0 0x154>;
+		#phy-cells = <0>;
+
+		clocks = <&rpmhcc RPMH_CXO_CLK>;
+		clock-names = "ref";
+		resets = <&gcc GCC_QUSB2PHY_PRIM_BCR>;
+
+		status = "disabled";
+	};
+
 	ufs_mem_phy: phy@1d80000 {
 		compatible = "qcom,sm8475-qmp-ufs-phy";
 		reg = <0 0x01d80000 0 0x2000>;
@@ -173,7 +198,9 @@
 
 /*
  * Deliberate deferrals:
- * - SM8475 eUSB2 PHY/repeater supplies need a separate USB handoff.
+ * - SM8475 eUSB2 PHY is staged but disabled: the external NXP
+ *   repeater model/driver/reset and upstream rail input topology remain
+ *   unvalidated. No physical USB connectivity is implied.
  * - GPU OPPs are staged but disabled: CX votes, GMU profile and signed
  *   Motorola firmware still require independent validation.
  */
