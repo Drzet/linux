@@ -257,3 +257,13 @@
 &lpass_tlmm {
 	status = "disabled";
 };
+
+/*
+ * DISPCC is not needed for UART-only first boot. Its inherited clock
+ * parents include intentionally disabled DSI PHYs and QMP DP clocks.
+ * DisplayPort and panels remain blocked on the connector/AUX contract.
+ * Keep the clock controller disabled until a coherent display bring-up.
+ */
+&dispcc {
+	status = "disabled";
+};
