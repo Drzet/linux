@@ -23,6 +23,17 @@ static const struct iris_firmware_desc iris_milos_desc = {
 	.fwname = "qcom/vpu/vpu20_p2_gen2_s7.mbn",
 };
 
+/*
+ * [INFERRED] Cape uses VPU2 host registers with HFI Gen2 based on the Waipio
+ * source and the 2026-10-11 pinned host ABI comparison. The firmware binary
+ * was not inspected. Require an explicit, verified firmware-name in DT
+ * instead of guessing a filesystem path for Motorola's "vpu20_4v".
+ */
+static const struct iris_firmware_desc iris_sm8475_gen2_desc = {
+	.firmware_data = &iris_hfi_gen2_data,
+	.get_vpu_buffer_size = iris_vpu_buf_size,
+};
+
 static const struct iris_firmware_desc iris_vpu20_p1_gen1_desc = {
 	.firmware_data = &iris_hfi_gen1_data,
 	.get_vpu_buffer_size = iris_vpu_buf_size,
@@ -103,6 +114,59 @@ const struct iris_platform_data milos_data = {
 	.max_session_count = 16,
 	.max_core_mbpf = ((4096 * 2176) / 256) * 2,
 	.max_core_mbps = ((3840 * 2176) / 256) * 30 + ((1920 * 1088) / 256) * 30,
+};
+
+/*
+ * [INFERRED] The OPP provider order is taken from SM8450 VIDEOCC mainline
+ * dependencies; Motorola video DT only establishes two video GDSCs. Boot
+ * must not enable the node before RPMh domains/corners are reconciled.
+ */
+static const char * const sm8475_opp_pd_table[] = { "mxc", "mmcx" };
+
+static struct platform_inst_caps platform_inst_cap_sm8475 = {
+	.min_frame_width = 96,
+	.max_frame_width = 8192,
+	.min_frame_height = 96,
+	.max_frame_height = 8192,
+	.max_mbpf = 138240,
+	.mb_cycles_vsp = 25,
+	.mb_cycles_vpp = 200,
+	.max_frame_rate = MAXIMUM_FPS,
+	.max_operating_rate = MAXIMUM_FPS,
+};
+
+/*
+ * Candidate Cape/Waipio profile. The four VPP pipes, macroblock limits
+ * and Gen2 packet format come from the pinned SM8475 downstream comparator;
+ * they are not measurements on Motorola oneli. The SM8250 bandwidth table
+ * is a [INFERRED] conservative starting policy, not Cape characterization.
+ */
+const struct iris_platform_data sm8475_data = {
+	.firmware_desc_gen2 = &iris_sm8475_gen2_desc,
+	.vpu_ops = &iris_vpu2_ops,
+	.icc_tbl = iris_icc_info_vpu2,
+	.icc_tbl_size = ARRAY_SIZE(iris_icc_info_vpu2),
+	.bw_tbl_dec = sm8250_bw_table_dec,
+	.bw_tbl_dec_size = ARRAY_SIZE(sm8250_bw_table_dec),
+	.pmdomain_tbl = iris_pmdomain_table_vpu2,
+	.pmdomain_tbl_size = ARRAY_SIZE(iris_pmdomain_table_vpu2),
+	.opp_pd_tbl = sm8475_opp_pd_table,
+	.opp_pd_tbl_size = ARRAY_SIZE(sm8475_opp_pd_table),
+	.clk_tbl = sm8250_clk_table,
+	.clk_tbl_size = ARRAY_SIZE(sm8250_clk_table),
+	.opp_clk_tbl = sm8250_opp_clk_table,
+	.clk_rst_tbl = iris_clk_reset_table_vpu2,
+	.clk_rst_tbl_size = ARRAY_SIZE(iris_clk_reset_table_vpu2),
+	.dma_mask = 0xe0000000 - 1,
+	.inst_iris_fmts = iris_fmts_vpu2_dec,
+	.inst_iris_fmts_size = ARRAY_SIZE(iris_fmts_vpu2_dec),
+	.inst_caps = &platform_inst_cap_sm8475,
+	.tz_cp_config_data = tz_cp_config_vpu2,
+	.tz_cp_config_data_size = ARRAY_SIZE(tz_cp_config_vpu2),
+	.num_vpp_pipe = 4,
+	.max_session_count = 16,
+	.max_core_mbpf = 276480,
+	.max_core_mbps = 7833600,
 };
 
 const struct iris_platform_data sc7280_data = {
