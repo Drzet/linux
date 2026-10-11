@@ -171,3 +171,40 @@
 &wsamacro {
 	status = "disabled";
 };
+
+/*
+ * USB2-only diagnostic proposal, electrically INACTIVE.
+ * USB owner source contract: Drzet/razr2022_nuc
+ * docs/usb2_first_boot_contract_v1_2026-10-11.md
+ *
+ * The SM8475 eUSB2 block requires the external NXP repeater at
+ * QUP0 SE5 I2C address 0x4f. That chip's exact ID, init/tuning driver
+ * and PM8350C GPIO7 reset semantics are not yet resolved. Supplies
+ * below come from disabled RPMh providers; do not enable any device
+ * in this group until the Power/USB evidence gates are satisfied.
+ */
+&usb_1_hsphy {
+	vdd-supply = <&oneli_l5b>;
+	vdda12-supply = <&oneli_l10c>;
+	status = "disabled";
+};
+
+/*
+ * [INFERRED] HS-only DWC3 diagnostics: mainline UTMI pipe selection
+ * avoids a dependency on QMP USB3/DP link during first USB2 debugging.
+ * Source role/physical repeater path is not demonstrated.
+ */
+&usb_1 {
+	dr_mode = "otg";
+	usb-role-switch;
+	maximum-speed = "high-speed";
+	qcom,select-utmi-as-pipe-clk;
+	phys = <&usb_1_hsphy>;
+	phy-names = "usb2-phy";
+	status = "disabled";
+};
+
+/* Motorola's QUP0 SE5 repeater transport; no provider bound yet. */
+&i2c5 {
+	status = "disabled";
+};
