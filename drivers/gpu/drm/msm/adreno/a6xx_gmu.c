@@ -2456,7 +2456,9 @@ int a6xx_gmu_init(struct a6xx_gpu *a6xx_gpu, struct device_node *node)
 	gmu->gxpd = dev_pm_domain_attach_by_name(gmu->dev, "gx");
 
 	/* Get the power levels for the GMU and GPU */
-	a6xx_gmu_pwrlevels_probe(gmu);
+	ret = a6xx_gmu_pwrlevels_probe(gmu);
+	if (ret)
+		goto detach_gxpd;
 
 	ret = a6xx_gmu_acd_probe(gmu);
 	if (ret)
@@ -2492,6 +2494,7 @@ err_mmio:
 err_memory:
 	a6xx_gmu_memory_free(gmu);
 err_put_device:
+	pm_runtime_disable(gmu->dev);
 	/* Drop reference taken in of_find_device_by_node */
 	put_device(gmu->dev);
 
