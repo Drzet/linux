@@ -1,0 +1,67 @@
+name: Razr PS5169 upstream candidate build
+
+on:
+  push:
+    branches: [razr/usb]
+    paths:
+      - .github/workflows/razr-ps5169-candidate.yml
+      - scripts/razr/ps5169-candidate-headers.py
+  workflow_dispatch:
+
+jobs:
+  candidate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Prerequisites
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y build-essential bc bison flex libelf-dev libssl-dev libncurses-dev dwarves curl
+      - name: Apply attributed upstream v3 and local build repair
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ps5169-ci-record
+          echo "checkout_sha=$(git rev-parse HEAD)" | tee ps5169-ci-record/input.txt
+          curl -fL --retry 3 --connect-timeout 15 --max-time 120 \
+            'https://patchew.org/linux/20260810-ps5169-bup-v3-0-a2178b2834d7@proton.me/mbox' \
+            -o ps5169-ci-record/ps5169-v3.mbox
+          sha256sum ps5169-ci-record/ps5169-v3.mbox | tee ps5169-ci-record/mbox-sha256.txt
+          git config user.email 'usb-ci@example.invalid'
+          git config user.name 'USB candidate CI'
+          git am --3way ps5169-ci-record/ps5169-v3.mbox
+          git log -2 --format='%H %an <%ae> %s' | tee ps5169-ci-record/upstream-commits.txt
+          python3 scripts/razr/ps5169-candidate-headers.py
+          git diff -- drivers/usb/typec/mux/ps5169.c | tee ps5169-ci-record/header-repair.diff
+          git diff --check
+          git status --short | tee ps5169-ci-record/status.txt
+      - name: Build standalone candidate source object
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            uname -a
+            cc --version | head -n 1
+            make --version | head -n 1
+          } | tee ps5169-ci-record/build-tools.txt
+          make x86_64_defconfig 2>&1 | tee ps5169-ci-record/defconfig.log
+          scripts/config --enable I2C --enable REGMAP_I2C --enable DRM \
+            --enable DRM_BRIDGE --enable TYPEC --enable TYPEC_MUX_PS5169
+          make olddefconfig 2>&1 | tee ps5169-ci-record/olddefconfig.log
+          cp .config ps5169-ci-record/defconfig-resolved.config
+          grep -E '^CONFIG_(I2C|REGMAP_I2C|DRM|TYPEC|TYPEC_MUX_PS5169)=' .config \
+            | tee ps5169-ci-record/selected-config.txt
+          grep -qx 'CONFIG_TYPEC_MUX_PS5169=y' .config
+          make -j2 V=1 drivers/usb/typec/mux/ps5169.o 2>&1 \
+            | tee ps5169-ci-record/ps5169-object-build.log
+          test -s drivers/usb/typec/mux/ps5169.o
+          sha256sum drivers/usb/typec/mux/ps5169.o \
+            | tee ps5169-ci-record/ps5169-object-sha256.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ps5169-candidate-${{ github.sha }}
+          path: ps5169-ci-record/
