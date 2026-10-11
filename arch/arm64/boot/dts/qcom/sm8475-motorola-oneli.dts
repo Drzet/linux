@@ -57,6 +57,67 @@
 };
 
 /*
+ * [INFERRED] Review-only RPMh rail reconstruction for Motorola oneli.
+ *
+ * Rail resource names, UFS consumers and initial voltage settings are
+ * extracted from Motorola Cape DT at 90fa7be1db5bd47202673d4431408659149a7359.
+ * RPMh PMIC IDs and upstream node representation match the SM8450 HDK
+ * comparator; upstream parent input supplies are not proven for oneli.
+ *
+ * Keep the provider devices disabled until the parent supply topology
+ * and bootloader/firmware regulator ownership are verified. This must
+ * not drive any rail in the present bring-up DT.
+ */
+&apps_rsc {
+	regulators-0 {
+		compatible = "qcom,pm8350-rpmh-regulators";
+		qcom,pmic-id = "b";
+		status = "disabled";
+
+		oneli_l5b: ldo5 {
+			regulator-name = "oneli-l5b-ufs-phy";
+			regulator-min-microvolt = <880000>;
+			regulator-max-microvolt = <880000>;
+		};
+
+		oneli_l7b: ldo7 {
+			regulator-name = "oneli-l7b-ufs-vcc";
+			regulator-min-microvolt = <2504000>;
+			regulator-max-microvolt = <2504000>;
+		};
+
+		oneli_l9b: ldo9 {
+			regulator-name = "oneli-l9b-ufs-vccq";
+			regulator-min-microvolt = <1200000>;
+			regulator-max-microvolt = <1200000>;
+		};
+	};
+
+	regulators-1 {
+		compatible = "qcom,pm8350c-rpmh-regulators";
+		qcom,pmic-id = "c";
+		status = "disabled";
+
+		oneli_l10c: ldo10 {
+			regulator-name = "oneli-l10c-ufs-pll";
+			regulator-min-microvolt = <1200000>;
+			regulator-max-microvolt = <1200000>;
+		};
+	};
+};
+
+/* UFS is still disabled. The supply phandles are review-only. */
+&ufs_mem_hc {
+	vcc-supply = <&oneli_l7b>;
+	vccq-supply = <&oneli_l9b>;
+};
+
+&ufs_mem_phy {
+	vdda-phy-supply = <&oneli_l5b>;
+	vdda-pll-supply = <&oneli_l10c>;
+};
+
+/*
  * The GENI QUP wrapper is disabled in the inherited SM8450 tree.
  * An enabled UART child cannot probe through a disabled parent.
  */
