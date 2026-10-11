@@ -57,9 +57,27 @@
 };
 
 /*
+ * The GENI QUP wrapper is disabled in the inherited SM8450 tree.
+ * An enabled UART child cannot probe through a disabled parent.
+ */
+&qupv3_id_0 {
+	status = "okay";
+};
+
+/*
  * Motorola's Cape DTS selected serial@99c000 for diagnostic output.
- * [INFERRED] The physical path is usable on the target retail board.
+ * UART7 belongs to QUP wrapper 0. Correct the inherited UART7
+ * interconnect votes (which incorrectly refer to wrapper 2) locally.
+ * Its existing GCC WRAP0_S7 clock and TLMM gpio26/27 pinctrl states
+ * are consistent with Motorola's Cape pinmux definition.
+ *
+ * [INFERRED] The UART signals are accessible on the retail board;
+ * this cannot be established without the handset.
  */
 &uart7 {
+	interconnects = <&clk_virt MASTER_QUP_CORE_0 QCOM_ICC_TAG_ALWAYS
+				&clk_virt SLAVE_QUP_CORE_0 QCOM_ICC_TAG_ALWAYS>,
+			<&gem_noc MASTER_APPSS_PROC QCOM_ICC_TAG_ALWAYS
+				&config_noc SLAVE_QUP_0 QCOM_ICC_TAG_ALWAYS>;
 	status = "okay";
 };
