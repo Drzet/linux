@@ -38,6 +38,8 @@ jobs:
           git log -2 --format='%H %an <%ae> %s' | tee ps5169-ci-record/upstream-commits.txt
           sha256sum drivers/usb/typec/mux/ps5169.c Documentation/devicetree/bindings/usb/parade,ps5169.yaml \
             | tee ps5169-ci-record/original-source-sha256.txt
+          echo 'b76465571bc5a7f80a177660e9290115fedcfbccda1fb43c801e25a6f3a521ed  drivers/usb/typec/mux/ps5169.c' | sha256sum -c -
+          echo '3c9f01f921398edf34e7d3b13439306bd26e8f48a75151294ec529c83b852cc3  Documentation/devicetree/bindings/usb/parade,ps5169.yaml' | sha256sum -c -
           python3 scripts/razr/ps5169-candidate-headers.py
           python3 scripts/razr/ps5169-candidate-power.py
           git diff -- drivers/usb/typec/mux/ps5169.c | tee ps5169-ci-record/driver-candidate.diff
