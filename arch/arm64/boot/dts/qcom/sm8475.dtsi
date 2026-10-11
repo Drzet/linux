@@ -1,0 +1,93 @@
+// SPDX-License-Identifier: BSD-3-Clause
+/*
+ * Copyright (c) 2024, Danila Tikhonov <danila@jiaxyga.com>
+ *
+ * Reconciled with upstream SM8450 support for Motorola Cape (SM8475).
+ * Community reference: sm8450-mainline/linux bf1d29fced6e156dd6090a9b6600a8c44259c114
+ * Motorola reference: kernel-devicetree 90fa7be1db5bd47202673d4431408659149a7359
+ */
+
+#include "sm8450.dtsi"
+
+/*
+ * Motorola's Cape UFS PHY is at 0x01d80000 rather than the
+ * SM8450 PHY address inherited from sm8450.dtsi.
+ */
+/delete-node/ &ufs_mem_phy;
+
+&soc {
+	ufs_mem_phy: phy@1d80000 {
+		compatible = "qcom,sm8475-qmp-ufs-phy";
+		reg = <0 0x01d80000 0 0x2000>;
+
+		clocks = <&rpmhcc RPMH_CXO_CLK>,
+			 <&gcc GCC_UFS_PHY_PHY_AUX_CLK>,
+			 <&gcc GCC_UFS_0_CLKREF_EN>;
+		clock-names = "ref", "ref_aux", "qref";
+
+		power-domains = <&gcc UFS_PHY_GDSC>;
+
+		resets = <&ufs_mem_hc 0>;
+		reset-names = "ufsphy";
+
+		#clock-cells = <1>;
+		#phy-cells = <0>;
+
+		status = "disabled";
+	};
+};
+
+&camcc {
+	compatible = "qcom,sm8475-camcc";
+};
+
+&dispcc {
+	compatible = "qcom,sm8475-dispcc";
+};
+
+&gcc {
+	compatible = "qcom,sm8475-gcc";
+};
+
+&gpucc {
+	compatible = "qcom,sm8475-gpucc";
+};
+
+/*
+ * [INFERRED] Basic GPIO/UART muxing is compatible with SM8450.
+ * Motorola's Cape pin mapping and PDC wake map were compared with the
+ * upstream SM8450 driver; their complete alternate mux lists differ.
+ * Keep the fallback only for initial board bring-up. Recheck before
+ * enabling more pinctrl clients.
+ */
+&tlmm {
+	compatible = "qcom,sm8475-tlmm", "qcom,sm8450-tlmm";
+};
+
+&ufs_mem_hc {
+	freq-table-hz =
+		<75000000 850000000>,
+		<0 0>,
+		<0 0>,
+		<75000000 850000000>,
+		<75000000 850000000>,
+		<0 0>,
+		<0 0>,
+		<0 0>;
+};
+
+/* The baseline driver has an SM8475-specific USB3/DP PHY match. */
+&usb_1_qmpphy {
+	compatible = "qcom,sm8475-qmp-usb3-dp-phy";
+};
+
+&videocc {
+	compatible = "qcom,sm8475-videocc";
+};
+
+/*
+ * Deliberate deferrals:
+ * - SM8475 eUSB2 PHY/repeater supplies need a separate USB handoff.
+ * - The inherited SM8450 GPU OPP table must be replaced, not appended to,
+ *   before enabling the GPU. The GPU is disabled in this initial board.
+ */
