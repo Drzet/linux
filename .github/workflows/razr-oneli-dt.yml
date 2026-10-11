@@ -25,6 +25,14 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Check out pinned compiled-FDT audit tool
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: Drzet/razr2022_nuc
+          ref: ceb102384214cbaa714e9ebf88765fe97f786ea4
+          path: project-audit
+          persist-credentials: false
+
       - name: Install toolchain and DT schema utilities
         run: |
           sudo apt-get update
@@ -41,6 +49,8 @@ jobs:
             dtc --version
             /tmp/razr-dt-venv/bin/dt-doc-validate --version || true
             /tmp/razr-dt-venv/bin/pip freeze
+            python3 --version
+            sha256sum project-audit/tests/scripts/check-oneli-dtb.py
           } > evidence/versions.txt 2>&1
 
       - name: Compile exact oneli DTB
@@ -52,27 +62,35 @@ jobs:
           make O=out -j"$(nproc)" qcom/sm8475-motorola-oneli.dtb \
             2>&1 | tee evidence/oneli-dtb.log
 
-      - name: Validate altered binding schemas
+      - name: Compile all Linux DT binding schemas
         shell: bash
         run: |
           set -o pipefail
           export ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu-
           export PATH="/tmp/razr-dt-venv/bin:$PATH"
-          make O=out DT_SCHEMA_FILES=Documentation/devicetree/bindings/arm/qcom.yaml \
-            dt_binding_check 2>&1 | tee evidence/arm-binding.log
-          make O=out DT_SCHEMA_FILES=Documentation/devicetree/bindings/pinctrl/qcom,sm8450-tlmm.yaml \
-            dt_binding_check 2>&1 | tee evidence/tlmm-binding.log
+          make O=out -j"$(nproc)" dt_binding_check 2>&1 | tee evidence/all-bindings.log
 
-      - name: Validate compiled oneli board against bindings
+      - name: Check exact oneli DTB against all applicable schemas
         shell: bash
         run: |
           set -o pipefail
           export ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu-
           export PATH="/tmp/razr-dt-venv/bin:$PATH"
-          make O=out DT_SCHEMA_FILES=Documentation/devicetree/bindings/arm/qcom.yaml \
-            dtbs_check 2>&1 | tee evidence/arm-dtbs-check.log
-          make O=out DT_SCHEMA_FILES=Documentation/devicetree/bindings/pinctrl/qcom,sm8450-tlmm.yaml \
-            dtbs_check 2>&1 | tee evidence/tlmm-dtbs-check.log
+          rm -f out/arch/arm64/boot/dts/qcom/sm8475-motorola-oneli.dtb
+          make O=out -j"$(nproc)" CHECK_DTBS=y qcom/sm8475-motorola-oneli.dtb \
+            2>&1 | tee evidence/oneli-all-dtbs-check.log
+
+      - name: Audit compiled FDT reservations and phandle dependencies
+        shell: bash
+        run: |
+          set -o pipefail
+          python3 project-audit/tests/scripts/check-oneli-dtb.py \
+            out/arch/arm64/boot/dts/qcom/sm8475-motorola-oneli.dtb \
+            --output evidence/oneli-fdt-audit.json 2>&1 | tee evidence/oneli-fdt-audit.log
+          dtc -I dtb -O dts -s \
+            -o evidence/sm8475-motorola-oneli.resolved.dts \
+            out/arch/arm64/boot/dts/qcom/sm8475-motorola-oneli.dtb \
+            2> evidence/decompile-warnings.log
 
       - name: Export evidence
         if: always()
