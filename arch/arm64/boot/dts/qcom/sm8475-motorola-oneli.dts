@@ -1,0 +1,65 @@
+// SPDX-License-Identifier: BSD-3-Clause
+/*
+ * Motorola razr 2022 (oneli), minimal native Linux board description.
+ *
+ * Source: MotorolaMobilityLLC/kernel-devicetree
+ * 90fa7be1db5bd47202673d4431408659149a7359
+ * qcom/cape-moto-oneli-base.dts and qcom/cape-oneli-pvt-overlay.dts.
+ *
+ * [INFERRED] The upstream board compatible uses "motorola,oneli" in
+ * place of Motorola's downstream "moto,oneli" property.
+ */
+
+/dts-v1/;
+
+#include "sm8475.dtsi"
+#include "pm8350.dtsi"
+#include "pm8350b.dtsi"
+#include "pm8350c.dtsi"
+#include "pm8450.dtsi"
+#include "pmk8350.dtsi"
+#include "pmr735a.dtsi"
+
+/*
+ * Motorola's oneli base remaps ADSP to 0x85700000 and video to
+ * 0x9fd00000. The inherited SM8450 RMTFS carveout conflicts with
+ * oneli's video reservation, so do not publish it until the live
+ * firmware's RMTFS address is known.
+ */
+/delete-node/ &adsp_mem;
+/delete-node/ &video_mem;
+/delete-node/ &rmtfs_mem;
+
+/ {
+	model = "Motorola razr 2022";
+	compatible = "motorola,oneli", "qcom,sm8475";
+	chassis-type = "handset";
+
+	aliases {
+		serial0 = &uart7;
+	};
+
+	chosen {
+		stdout-path = "serial0:115200n8";
+	};
+
+	reserved-memory {
+		adsp_mem: memory@85700000 {
+			reg = <0x0 0x85700000 0x0 0x2800000>;
+			no-map;
+		};
+
+		video_mem: memory@9fd00000 {
+			reg = <0x0 0x9fd00000 0x0 0x700000>;
+			no-map;
+		};
+	};
+};
+
+/*
+ * Motorola's Cape DTS selected serial@99c000 for diagnostic output.
+ * [INFERRED] The physical path is usable on the target retail board.
+ */
+&uart7 {
+	status = "okay";
+};
