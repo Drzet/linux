@@ -9,7 +9,7 @@
 #include <drm/bridge/aux-bridge.h>
 
 #include <linux/bitops.h>
-#include <linux/byteorder.h>
+#include <linux/byteorder/generic.h>
 #include <linux/delay.h>
 #include <linux/errno.h>
 #include <linux/gpio/consumer.h>
@@ -304,7 +304,6 @@ static int ps5169_set(struct redriver *ps5169)
 	default:
 		return -EOPNOTSUPP;
 	}
-
 }
 
 static int ps5169_switch_set(struct typec_switch_dev *sw, enum typec_orientation orientation)
