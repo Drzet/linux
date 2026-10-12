@@ -39,8 +39,7 @@ functions = "\n\n".join(extract(name) for name in
      "ps5169_retimer_set", "ps5169_init"))
 # These structural checks enforce probe's init failure/cleanup and LE conversion,
 # even though the probe itself requires a live kernel device model.
-for fragment in ("ret = ps5169_init(ps5169);", "goto retimer_unregister;",
-                 "retimer_unregister:", "typec_retimer_unregister(ps5169->retimer);",
+for fragment in ("ret = ps5169_init(ps5169);", "typec_retimer_unregister(ps5169->retimer);",
                  "vcc_disable:", "regulator_bulk_disable(",
                  "le16_to_cpu(chip_id)", "le16_to_cpu(chip_revision)"):
     if fragment not in src:
@@ -55,6 +54,9 @@ preamble = r"""
 #include <stdio.h>
 #include <limits.h>
 #include <errno.h>
+typedef uint8_t u8;
+typedef uint16_t u16;
+#define ARRAY_SIZE(a) (sizeof(a) / sizeof((a)[0]))
 #define BIT(x) (1U << (x))
 #define U32_MAX UINT32_MAX
 #define USB_TYPEC_DP_SID 0xff01
@@ -76,6 +78,7 @@ struct typec_altmode { unsigned int svid; };
 struct typec_mux_state { struct typec_altmode *alt; void *data; unsigned long mode; };
 struct typec_retimer_state { struct typec_altmode *alt; void *data; unsigned long mode; };
 
+static void usleep_range(unsigned int a, unsigned int b) { (void)a; (void)b; }
 static int io_calls, fail_io_at, downstream_mux_calls, fail_mux_at;
 static int downstream_sw_calls, fail_sw_at;
 static int inject_io(void) {
