@@ -614,6 +614,12 @@ static int ps5169_probe(struct i2c_client *client)
 		dev_err(dev, "Failed to configure PS5169 EQ/gain: %d\n", ret);
 		goto retimer_unregister;
 	}
+	/* EQ/gain alone is not a confirmed initial Type-C mode. */
+	ret = ps5169_set(ps5169);
+	if (ret) {
+		dev_err(dev, "Failed to program initial safe mode: %d\n", ret);
+		goto retimer_unregister;
+	}
 	ps5169->hw_valid = true;
 
 	i2c_set_clientdata(client, ps5169);
