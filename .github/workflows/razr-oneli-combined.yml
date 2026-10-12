@@ -1,0 +1,220 @@
+name: Razr oneli combined candidate ARM64 Image modules and artifacts
+
+on:
+  push:
+    branches: [razr/integration-candidate]
+    paths:
+      - '.github/workflows/razr-oneli-combined.yml'
+      - 'drivers/gpu/drm/msm/adreno/a6xx_catalog.c'
+      - 'drivers/gpu/drm/msm/adreno/a6xx_gmu.c'
+      - 'drivers/power/supply/qcom_battmgr.c'
+      - 'drivers/power/supply/qcom_battmgr_test.c'
+      - 'drivers/power/supply/qcom_battmgr_internal.h'
+      - 'drivers/power/supply/Kconfig'
+      - 'drivers/power/supply/Makefile'
+      - 'arch/arm64/boot/dts/qcom/sm8475*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  arm64-combined:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      ARCH: arm64
+      CROSS_COMPILE: aarch64-linux-gnu-
+    steps:
+      - name: Checkout exactly selected combined candidate
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Pin Boot QEMU configuration and compiled FDT audit
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: Drzet/razr2022_nuc
+          ref: 6a80ab302e9e2cf5aaf3ca0187baec106e985ade
+          path: project-interface
+          persist-credentials: false
+      - name: Toolchain, build and schema prerequisites
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
+            make bc bison flex libssl-dev libelf-dev libncurses-dev \
+            python3 python3-venv python3-pip device-tree-compiler \
+            kmod zstd xz-utils libyaml-dev
+          python3 -m venv /tmp/oneli-dts-venv
+          /tmp/oneli-dts-venv/bin/pip install dtschema
+          mkdir -p evidence
+          {
+            printf 'kernel_sha=%s\n' "$GITHUB_SHA"
+            printf 'boot_interface_sha=%s\n' 6a80ab302e9e2cf5aaf3ca0187baec106e985ade
+            aarch64-linux-gnu-gcc --version | head -1
+            make --version | head -1
+            dtc --version
+            depmod --version | head -1
+            python3 --version
+            /tmp/oneli-dts-venv/bin/pip freeze
+          } > evidence/toolchain.txt
+      - name: Configure one Image for oneli DT and QEMU virt
+        shell: bash
+        run: |
+          set -euo pipefail
+          make O=out defconfig 2>&1 | tee evidence/config.log
+          cp project-interface/configs/oneli-combined-qemu-virt.config evidence/config-fragment.txt
+          while IFS= read -r line; do
+            case "$line" in
+              CONFIG_*=y)
+                symbol="${line%%=*}"; scripts/config --file out/.config -e "${symbol#CONFIG_}" ;;
+              CONFIG_*=m)
+                symbol="${line%%=*}"; scripts/config --file out/.config -m "${symbol#CONFIG_}" ;;
+              CONFIG_*=n)
+                symbol="${line%%=*}"; scripts/config --file out/.config -d "${symbol#CONFIG_}" ;;
+            esac
+          done < evidence/config-fragment.txt
+          make O=out olddefconfig 2>&1 | tee -a evidence/config.log
+          while IFS= read -r line; do
+            case "$line" in
+              CONFIG_*=y|CONFIG_*=m|CONFIG_*=n)
+                grep -Fxq "$line" out/.config || { echo "KCONFIG_REQUIRED_MISSING: $line" >&2; exit 1; } ;;
+            esac
+          done < evidence/config-fragment.txt
+          test "$(grep '^CONFIG_DUMMY=' out/.config)" = 'CONFIG_DUMMY=m'
+          make O=out -s kernelrelease > evidence/kernel.release
+      - name: Full ARM64 Image modules and oneli DTB, ordinary modpost
+        shell: bash
+        run: |
+          set -euo pipefail
+          make O=out -j"$(nproc)" Image modules qcom/sm8475-motorola-oneli.dtb \
+            2>&1 | tee evidence/build.log
+          test -s out/arch/arm64/boot/Image
+          test -s out/Module.symvers
+          test -s out/arch/arm64/boot/dts/qcom/sm8475-motorola-oneli.dtb
+          grep -Ei '(MODPOST|\bmodules\b)' evidence/build.log | tail -n 50 > evidence/modpost-excerpt.txt || true
+      - name: All applicable oneli DT schemas and independent FDT audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="/tmp/oneli-dts-venv/bin:$PATH"
+          rm -f out/arch/arm64/boot/dts/qcom/sm8475-motorola-oneli.dtb
+          make O=out -j"$(nproc)" CHECK_DTBS=y qcom/sm8475-motorola-oneli.dtb \
+            2>&1 | tee evidence/all-applicable-dtbs.log
+          dt-validate -m -u Documentation/devicetree/bindings \
+            -p out/Documentation/devicetree/bindings/processed-schema.json \
+            out/arch/arm64/boot/dts/qcom/sm8475-motorola-oneli.dtb \
+            2>&1 | tee evidence/all-applicable-dt-validate.log
+          test ! -s evidence/all-applicable-dt-validate.log || {
+            echo 'Direct board schema emitted diagnostics' >&2; exit 1; }
+          python3 project-interface/tests/scripts/check-oneli-dtb.py \
+            out/arch/arm64/boot/dts/qcom/sm8475-motorola-oneli.dtb \
+            --output evidence/oneli-fdt-audit.json 2>&1 | tee evidence/oneli-fdt-audit.log
+      - name: Install complete matching ARM64 module tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          release=$(cat evidence/kernel.release)
+          make O=out modules_install INSTALL_MOD_PATH="$PWD/module-stage" INSTALL_MOD_STRIP=1 \
+            2>&1 | tee evidence/install-modules.log
+          test -d "module-stage/lib/modules/$release"
+          depmod -b "$PWD/module-stage" "$release"
+          test -s "module-stage/lib/modules/$release/modules.dep"
+          mkdir -p "artifact-root/modules/$release" artifact-root/logs
+          cp -a "module-stage/lib/modules/$release/." "artifact-root/modules/$release/"
+          find "artifact-root/modules/$release" -type l -delete
+          test -z "$(find "artifact-root/modules/$release" -type l -print -quit)"
+          test -f "artifact-root/modules/$release/kernel/drivers/net/dummy.ko"
+          test "$(modinfo -F vermagic "artifact-root/modules/$release/kernel/drivers/net/dummy.ko" | awk '{print $1}')" = "$release"
+          cp out/arch/arm64/boot/Image artifact-root/Image
+          cp out/arch/arm64/boot/dts/qcom/sm8475-motorola-oneli.dtb artifact-root/sm8475-motorola-oneli.dtb
+          cp out/.config artifact-root/kernel.config
+          cp out/.config artifact-root/.config
+          cp out/Module.symvers artifact-root/Module.symvers
+          cp evidence/kernel.release artifact-root/kernel.release
+          cp evidence/*.txt evidence/*.log evidence/*.json artifact-root/logs/ 2>/dev/null || true
+      - name: Generate exact file/commit manifest and Userspace v3 handoff
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > /tmp/package_combined.py <<'PY'
+          import hashlib, json, os, pathlib, subprocess
+          root=pathlib.Path("artifact-root")
+          release=(root/"kernel.release").read_text().strip()
+          sha=lambda path: hashlib.sha256(path.read_bytes()).hexdigest()
+          moddir=root/"modules"/release
+          mods=sorted(p for p in moddir.rglob("*") if p.is_file() and p.name.endswith((".ko",".ko.gz",".ko.xz",".ko.zst")))
+          assert mods and (moddir/"modules.dep").is_file()
+          assert (moddir/"kernel/drivers/net/dummy.ko").is_file()
+          images={s:sha(root/s) for s in ("Image","kernel.config","Module.symvers","sm8475-motorola-oneli.dtb","kernel.release")}
+          module_hashes={p.relative_to(moddir).as_posix():sha(p) for p in mods}
+          sources=[
+          ("4955f07a94ea3c51e423e34d819ac3f76f1c9d37","eaf8c3dd0d3395bd8915e16c6bd352a4c46f9e2c"),
+          ("3baaec593ae7c701e95e0c3df2d56c33d3aed4f3","f00db9a6d593c03ecf469bcb1d1394d67e604924"),
+          ("add9522b3a7ba4ae9d34ee670577c1a0f742585e","77969dce2ee39fe362cfeafbc62a8a200f903cf0"),
+          ("a645ca00d80c8def170878e2283975ccacc209a8","d371fed6414882b5aedc6e17e16c8d73241c30fd"),
+          ("b08688eb8f8905da4a37a7644c381f0d579b7ff8","75a6e39788ad6884314fdac5f8232b199a6cd545"),
+          ("0a7af7aeb9aa843547aa3bddc6b326fb04c49808","b274ea4f23b5bc3c813546a48595a75f2fe3050a"),
+          ("564f2c7df60316db86e36d7267ddadf07bc32b7e","5e647126da5cd0379b061789b1148107bbc7fda3")]
+          fw={"schema_version":2,"target_environment":"qemu_virt","assessment":"complete",
+              "required_files":[],"unknown_requirements":[],
+              "zero_requirements_reason":"QEMU virt uses built-in PL011 and virtio block/network without Qualcomm GPU/VPU peripherals or firmware."}
+          (root/"firmware-qemu-virt.json").write_text(json.dumps(fw,indent=2)+"\n")
+          build_id=hashlib.sha256(("|".join([os.environ["GITHUB_SHA"],release,images["Image"],images["kernel.config"],images["Module.symvers"]])).encode()).hexdigest()
+          manifest={"schema":"oneli-combined-build-manifest-v1","kernel_commit":os.environ["GITHUB_SHA"],
+            "kernel_release":release,"build_id":build_id,"branch":"razr/integration-candidate",
+            "base_boot_sha":"525b504b82dbca593a9a697af9be63f53915e0a3",
+            "upstream_baseline":"a5ebb76233b79db01e82e061173cb73c6d2b5c6b",
+            "replayed_commits":[{"original":a,"result":b} for a,b in sources],
+            "source_config_project_commit":"6a80ab302e9e2cf5aaf3ca0187baec106e985ade",
+            "artifact_contract":"Drzet/razr2022_nuc#13", "qemu_runtime_module":"dummy",
+            "module_count":len(module_hashes),"files_sha256":images,
+            "module_tree":"modules/"+release,"modules_dep_sha256":sha(moddir/"modules.dep"),
+            "module_sha256_manifest":"module-sha256.json",
+            "scope":"source build and static FDT schema only; hardware and guest not tested"}
+          (root/"build-manifest.json").write_text(json.dumps(manifest,indent=2)+"\n")
+          (root/"module-sha256.json").write_text(json.dumps(module_hashes,indent=2)+"\n")
+          preflight={"schema_version":3,"repository":"https://github.com/Drzet/linux",
+            "target_environment":"qemu_virt","kernel_commit":os.environ["GITHUB_SHA"],
+            "kernel_release":release,
+            "same_build":{"build_id":build_id,"kernel_commit":os.environ["GITHUB_SHA"],"kernel_release":release,
+               "image_sha256":images["Image"],"config_sha256":images["kernel.config"],"module_symvers_sha256":images["Module.symvers"]},
+            "image_path":"Image","config_path":"kernel.config","module_symvers_path":"Module.symvers",
+            "modules_directory":"modules/"+release,"initramfs_path":None,
+            "initramfs_modules":[],"zero_initramfs_modules_reason":"All QEMU virt early-boot rootfs, storage, serial and net devices are built into this kernel.",
+            "firmware_manifest_path":"firmware-qemu-virt.json","firmware_directory":None,
+            "dtb_path":None,"boot_packaging_manifest_path":None,
+            "modules_sha256":module_hashes,
+            "qemu_runtime_module":{"name":"dummy","relative_path":"kernel/drivers/net/dummy.ko"},
+            "sha256":{"image_path":images["Image"],"config_path":images["kernel.config"],
+              "module_symvers_path":images["Module.symvers"],"initramfs_path":None,
+              "firmware_manifest_path":sha(root/"firmware-qemu-virt.json"),
+              "modules_dep":sha(moddir/"modules.dep")},
+            "evidence_stage":"producer-preflight-only; Userspace adds initramfs and validates/boots"}
+          (root/"qemu-native-inputs.v3.preflight.json").write_text(json.dumps(preflight,indent=2)+"\n")
+          allfiles=sorted(p for p in root.rglob("*") if p.is_file())
+          (root/"SHA256SUMS").write_text("".join(f"{sha(p)}  {p.relative_to(root).as_posix()}\n" for p in allfiles))
+          print("COMBINED_BUILD_ARTIFACTS_PASS",os.environ["GITHUB_SHA"],release,len(module_hashes),build_id)
+          PY
+          python3 /tmp/package_combined.py | tee evidence/package.log
+          tar -C artifact-root -cf - . | zstd -T0 -9 -o combined-bundle.tar.zst
+          sha256sum combined-bundle.tar.zst | tee evidence/combined-bundle.sha256
+          test -s combined-bundle.tar.zst
+      - name: Upload complete download-ready combined kernel/module bundle
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: oneli-combined-bundle-${{ github.run_id }}-${{ github.run_attempt }}
+          path: combined-bundle.tar.zst
+          retention-days: 30
+          if-no-files-found: warn
+      - name: Upload direct source/config/build audit files
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: oneli-combined-logs-${{ github.run_id }}-${{ github.run_attempt }}
+          path: evidence/
+          retention-days: 30
+          if-no-files-found: warn
