@@ -28,6 +28,11 @@ properties:
 
   reset-gpios:
     maxItems: 1
+    description: Reset input on boards wired for an assertion pulse.
+
+  enable-gpios:
+    maxItems: 1
+    description: Active-high enable input, held asserted during chip operation.
 
   orientation-switch: true
   retimer-switch: true
@@ -121,9 +126,14 @@ required:
   - reg
   - vcc-supply
   - vio-supply
-  - reset-gpios
   - orientation-switch
   - retimer-switch
+
+oneOf:
+  - required:
+      - reset-gpios
+  - required:
+      - enable-gpios
 
 allOf:
   - $ref: usb-switch.yaml#
@@ -161,7 +171,8 @@ examples:
             reg = <0x30>;
 
             vcc-supply = <&vreg_s10b_1p8>;
-            reset-gpios = <&tlmm 54 GPIO_ACTIVE_LOW>;
+            vio-supply = <&vreg_l8c_1p8>;
+            enable-gpios = <&tlmm 54 GPIO_ACTIVE_HIGH>;
 
             orientation-switch;
             retimer-switch;
