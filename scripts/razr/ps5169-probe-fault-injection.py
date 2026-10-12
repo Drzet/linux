@@ -99,6 +99,8 @@ struct typec_retimer_desc {
 };
 struct ps5169_regmap_config { int dummy; };
 static const struct ps5169_regmap_config ps5169_regmap = {0};
+static int regmap_write(struct regmap *r, unsigned int reg, unsigned int val);
+static void usleep_range(unsigned int lo, unsigned int hi);
 
 enum stage {
     NO_FAULT, FAIL_REG_GET, FAIL_GPIO_GET, FAIL_MAP_GET,
