@@ -1,0 +1,84 @@
+name: Razr PS5169 fault handling ARM64 module validation
+
+on:
+  push:
+    branches: [razr/usb-ps5169]
+    paths:
+      - 'drivers/usb/typec/mux/ps5169.c'
+      - 'Documentation/devicetree/bindings/usb/parade,ps5169.yaml'
+      - 'scripts/razr/ps5169-fault-injection.py'
+      - '.github/workflows/razr-ps5169-fault-ci.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  host-fault-injection:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - name: Extract actual PS5169 helpers and test injected IO and downstream errors
+        run: |
+          set -euo pipefail
+          python3 scripts/razr/ps5169-fault-injection.py | tee fault-injection.log
+          git rev-parse HEAD | tee tested-sha.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ps5169-fault-test-${{ github.sha }}
+          path: |
+            fault-injection.log
+            tested-sha.txt
+          if-no-files-found: warn
+
+  arm64-and-binding:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install cross-compiler and dtschema
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
+            bc bison flex libelf-dev libssl-dev libncurses-dev dwarves device-tree-compiler python3-venv
+          python3 -m venv .usb-schema-venv
+          .usb-schema-venv/bin/pip install dtschema
+      - name: Validate PS5169 source and enable/reset binding
+        run: |
+          set -euo pipefail
+          mkdir -p ps5169-record
+          git rev-parse HEAD | tee ps5169-record/tested-source-sha.txt
+          aarch64-linux-gnu-gcc --version | head -1 | tee ps5169-record/compiler.txt
+          .usb-schema-venv/bin/pip freeze > ps5169-record/schema-versions.txt
+          PATH="$PWD/.usb-schema-venv/bin:$PATH" \
+            make DT_SCHEMA_FILES=Documentation/devicetree/bindings/usb/parade,ps5169.yaml dt_binding_check \
+              2>&1 | tee ps5169-record/schema.log
+      - name: Build dependency-complete ARM64 Image and modules
+        run: |
+          set -euo pipefail
+          make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- defconfig \
+            2>&1 | tee ps5169-record/defconfig.log
+          scripts/config --enable I2C --enable REGMAP_I2C --enable DRM \
+            --enable DRM_BRIDGE --enable TYPEC --module TYPEC_MUX_PS5169
+          make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- olddefconfig \
+            2>&1 | tee ps5169-record/olddefconfig.log
+          grep -qx 'CONFIG_TYPEC_MUX_PS5169=m' .config
+          cp .config ps5169-record/resolved-arm64.config
+          make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- -j4 Image modules \
+            2>&1 | tee ps5169-record/arm64-image-modules.log
+          test -s Module.symvers
+          test -s arch/arm64/boot/Image
+          test -s drivers/usb/typec/mux/ps5169.ko
+          aarch64-linux-gnu-readelf -h drivers/usb/typec/mux/ps5169.ko \
+            | tee ps5169-record/ps5169-module-elf.txt
+          sha256sum arch/arm64/boot/Image Module.symvers \
+            drivers/usb/typec/mux/ps5169.ko \
+            | tee ps5169-record/output-sha256.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ps5169-arm64-error-handling-${{ github.sha }}
+          path: ps5169-record/
+          if-no-files-found: warn
