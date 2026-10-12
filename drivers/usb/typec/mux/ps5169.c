@@ -16,6 +16,7 @@
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/mutex.h>
+#include <linux/of.h>
 #include <linux/property.h>
 #include <linux/regulator/consumer.h>
 #include <linux/slab.h>
@@ -67,6 +68,71 @@
 
 #define PS5169_AUX_MONITORING_BIT	BIT(1)
 #define PS5169_HPD_LEVEL_BIT		BIT(2)
+
+/*
+ * The oneli PS5169 init profile is selected by a board-specific compatible,
+ * not by a generic opaque register list in devicetree. Motorola's 2022
+ * downstream reference has 27 ordered (register, value, delay-us) triplets.
+ * Only fields with a decoded function are named below; remaining registers
+ * intentionally retain their numerical addresses rather than fictitious
+ * field names. No claim is made about their physical effect without a
+ * PS5169 register specification.
+ */
+#define PS5169_ONELI_PROFILE_RESET_REG 0x9d
+
+struct ps5169_reg_init {
+	u8 reg;
+	u8 value;
+	u16 delay_us;
+};
+
+static const struct ps5169_reg_init ps5169_oneli_init[] = {
+	{ PS5169_ONELI_PROFILE_RESET_REG, 0x80, 10000 },
+	{ PS5169_ONELI_PROFILE_RESET_REG, 0x00, 0 },
+	{ PS5169_CONFIG_REG, 0x80, 0 },
+	{ PS5169_USB_RX1_LFPS_REG, 0x01, 0 },
+	{ PS5169_USB_RX2_LFPS_REG, 0x01, 0 },
+	{ 0x51, 0x87, 0 }, /* USB RX EQ: OEM value, not generic dB preset */
+	{ 0x50, 0x20, 0 }, /* USB TX EQ */
+	{ 0x54, 0x11, 0 }, /* USB RX/TX EQ shared register */
+	{ 0x5d, 0x66, 0 }, /* USB TX EQ */
+	{ 0x52, 0x50, 0 }, /* DP EQ */
+	{ 0x55, 0x00, 0 }, /* OEM preset: field semantics unverified */
+	{ 0x56, 0x00, 0 },
+	{ 0x57, 0x00, 0 },
+	{ 0x58, 0x00, 0 },
+	{ 0x59, 0x00, 0 },
+	{ 0x5a, 0x00, 0 },
+	{ 0x5b, 0x00, 0 },
+	{ 0x5e, 0x07, 0 }, /* DP EQ */
+	{ 0x5f, 0x00, 0 },
+	{ 0x60, 0x00, 0 },
+	{ 0x61, 0x03, 0 },
+	{ 0x65, 0x40, 0 },
+	{ 0x66, 0x00, 0 },
+	{ 0x67, 0x03, 0 },
+	{ 0x75, 0x0c, 0 },
+	{ 0x77, 0x00, 0 }, /* USB RX EQ */
+	{ 0x78, 0x7c, 0 }, /* USB RX EQ */
+};
+
+static int ps5169_apply_oneli_profile(struct regmap *regmap)
+{
+	int ret, i;
+
+	for (i = 0; i < ARRAY_SIZE(ps5169_oneli_init); i++) {
+		const struct ps5169_reg_init *entry = &ps5169_oneli_init[i];
+
+		ret = regmap_write(regmap, entry->reg, entry->value);
+		if (ret)
+			return ret;
+
+		if (entry->delay_us)
+			usleep_range(entry->delay_us, entry->delay_us + 1000);
+	}
+
+	return 0;
+}
 
 /* PS5169 register values */
 #define PS5169_CHIP_ID_VAL		0x6987
@@ -209,6 +275,7 @@ struct redriver {
 
 	unsigned int svid;
 	bool hw_valid;
+	bool oneli_profile;
 };
 
 static const struct regmap_config ps5169_regmap = {
@@ -422,6 +489,10 @@ static int ps5169_init(struct redriver *ps5169)
 {
 	int i, ret;
 
+	/* The stock profile already defines all EQ and gain-related registers. */
+	if (ps5169->oneli_profile)
+		return ps5169_apply_oneli_profile(ps5169->regmap);
+
 	if (ps5169->dp_eq_level != U32_MAX)
 		for (i = 0; i < PS5169_DP_EQ_REG_COUNT; i++) {
 			ret = regmap_update_bits(ps5169->regmap, ps5169_dp_eq_reg[i],
@@ -556,7 +627,26 @@ static int ps5169_probe(struct i2c_client *client)
 	dev_dbg(dev, "Found PS5169 with chip revision 0x%04x\n",
 		le16_to_cpu(chip_revision));
 
-	/* DP equalization */
+	ps5169->oneli_profile =
+		of_device_is_compatible(dev->of_node, "motorola,oneli-ps5169");
+	if (ps5169->oneli_profile) {
+		/*
+		 * The 27-register OEM baseline is indivisible. Generic EQ/gain
+		 * properties cannot override or replace its unclassified fields.
+		 */
+		if (device_property_present(dev, "parade,dp-eq-db") ||
+		    device_property_present(dev, "parade,usb-rx-eq-db") ||
+		    device_property_present(dev, "parade,usb-tx-eq-db") ||
+		    device_property_present(dev, "parade,dp-set-gain") ||
+		    device_property_present(dev, "parade,usb-rx-set-gain") ||
+		    device_property_present(dev, "parade,usb-tx-set-gain") ||
+		    device_property_present(dev, "parade,fine-tune-lfps-swing")) {
+			ret = dev_err_probe(dev, -EINVAL,
+				"oneli profile forbids generic EQ/gain/LFPS overrides\\n");
+			goto vcc_disable;
+		}
+	} else {
+		/* DP equalization */
 	ret = ps5169_eq_from_dt(dev, &ps5169_dp_eq_data, &(ps5169->dp_eq_level));
 	if (ret)
 		goto vcc_disable;
@@ -577,6 +667,7 @@ static int ps5169_probe(struct i2c_client *client)
 	ps5169->dp_set_gain = device_property_read_bool(dev, "parade,dp-set-gain");
 	ps5169->usb_rx_set_gain = device_property_read_bool(dev, "parade,usb-rx-set-gain");
 	ps5169->usb_tx_set_gain = device_property_read_bool(dev, "parade,usb-tx-set-gain");
+	} /* Non-oneli generic EQ profile */
 
 	ret = drm_aux_bridge_register(dev);
 	if (ret) {
@@ -609,6 +700,11 @@ static int ps5169_probe(struct i2c_client *client)
 		goto switch_unregister;
 	}
 
+	/*
+	 * The full oneli profile is applied only after rails, GPIO enable
+	 * and chip identity are established, then SAFE mode is programmed.
+	 * A partial write fails probe and triggers the normal cleanup.
+	 */
 	ret = ps5169_init(ps5169);
 	if (ret) {
 		dev_err(dev, "Failed to configure PS5169 EQ/gain: %d\n", ret);
