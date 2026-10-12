@@ -56,6 +56,7 @@ preamble = r"""
 #include <errno.h>
 typedef uint8_t u8;
 typedef uint16_t u16;
+typedef uint32_t u32;
 #define ARRAY_SIZE(a) (sizeof(a) / sizeof((a)[0]))
 #define BIT(x) (1U << (x))
 #define U32_MAX UINT32_MAX
