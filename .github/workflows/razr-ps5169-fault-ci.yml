@@ -7,6 +7,7 @@ on:
       - 'drivers/usb/typec/mux/ps5169.c'
       - 'Documentation/devicetree/bindings/usb/parade,ps5169.yaml'
       - 'scripts/razr/ps5169-fault-injection.py'
+      - 'scripts/razr/ps5169-probe-fault-injection.py'
       - '.github/workflows/razr-ps5169-fault-ci.yml'
   workflow_dispatch:
 
@@ -23,6 +24,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 scripts/razr/ps5169-fault-injection.py | tee fault-injection.log
+          python3 scripts/razr/ps5169-probe-fault-injection.py | tee probe-fault-injection.log
           git rev-parse HEAD | tee tested-sha.txt
       - uses: actions/upload-artifact@v4
         if: always()
@@ -30,6 +32,7 @@ jobs:
           name: ps5169-fault-test-${{ github.sha }}
           path: |
             fault-injection.log
+            probe-fault-injection.log
             tested-sha.txt
           if-no-files-found: warn
 
