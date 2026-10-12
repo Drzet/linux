@@ -78,7 +78,7 @@
  * field names. No claim is made about their physical effect without a
  * PS5169 register specification.
  */
-#define PS5169_ONELI_PROFILE_RESET_REG 0x9d
+#define PS5169_ONELI_PROFILE_CONTROL_9D 0x9d
 
 struct ps5169_reg_init {
 	u8 reg;
@@ -87,8 +87,8 @@ struct ps5169_reg_init {
 };
 
 static const struct ps5169_reg_init ps5169_oneli_init[] = {
-	{ PS5169_ONELI_PROFILE_RESET_REG, 0x80, 10000 },
-	{ PS5169_ONELI_PROFILE_RESET_REG, 0x00, 0 },
+	{ PS5169_ONELI_PROFILE_CONTROL_9D, 0x80, 10000 },
+	{ PS5169_ONELI_PROFILE_CONTROL_9D, 0x00, 0 },
 	{ PS5169_CONFIG_REG, 0x80, 0 },
 	{ PS5169_USB_RX1_LFPS_REG, 0x01, 0 },
 	{ PS5169_USB_RX2_LFPS_REG, 0x01, 0 },
@@ -642,7 +642,7 @@ static int ps5169_probe(struct i2c_client *client)
 		    device_property_present(dev, "parade,usb-tx-set-gain") ||
 		    device_property_present(dev, "parade,fine-tune-lfps-swing")) {
 			ret = dev_err_probe(dev, -EINVAL,
-				"oneli profile forbids generic EQ/gain/LFPS overrides\\n");
+				"oneli profile forbids generic EQ/gain/LFPS overrides\n");
 			goto vcc_disable;
 		}
 	} else {
@@ -678,6 +678,23 @@ static int ps5169_probe(struct i2c_client *client)
 	ps5169->mode = TYPEC_STATE_SAFE;
 	ps5169->orientation = TYPEC_ORIENTATION_NONE;
 
+	/*
+	 * Finish the register profile and SAFE mode before publishing either
+	 * switch callback. In particular, callbacks must never observe
+	 * partially programmed OEM EQ / profile registers at probe time.
+	 */
+	ret = ps5169_init(ps5169);
+	if (ret) {
+		dev_err(dev, "Failed to initialize PS5169 register profile: %d\n", ret);
+		goto vcc_disable;
+	}
+	ret = ps5169_set(ps5169);
+	if (ret) {
+		dev_err(dev, "Failed to program initial safe mode: %d\n", ret);
+		goto vcc_disable;
+	}
+	ps5169->hw_valid = true;
+
 	/* orientation-switch */
 	switch_desc.drvdata = ps5169;
 	switch_desc.fwnode = dev_fwnode(dev);
@@ -700,30 +717,10 @@ static int ps5169_probe(struct i2c_client *client)
 		goto switch_unregister;
 	}
 
-	/*
-	 * The full oneli profile is applied only after rails, GPIO enable
-	 * and chip identity are established, then SAFE mode is programmed.
-	 * A partial write fails probe and triggers the normal cleanup.
-	 */
-	ret = ps5169_init(ps5169);
-	if (ret) {
-		dev_err(dev, "Failed to configure PS5169 EQ/gain: %d\n", ret);
-		goto retimer_unregister;
-	}
-	/* EQ/gain alone is not a confirmed initial Type-C mode. */
-	ret = ps5169_set(ps5169);
-	if (ret) {
-		dev_err(dev, "Failed to program initial safe mode: %d\n", ret);
-		goto retimer_unregister;
-	}
-	ps5169->hw_valid = true;
-
 	i2c_set_clientdata(client, ps5169);
 
 	return 0;
 
-retimer_unregister:
-	typec_retimer_unregister(ps5169->retimer);
 switch_unregister:
 	typec_switch_unregister(ps5169->sw);
 
