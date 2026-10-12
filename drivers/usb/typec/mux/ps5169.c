@@ -139,14 +139,14 @@ static int ps5169_apply_oneli_profile(struct regmap *regmap)
 #define PS5169_CHIP_ID_VAL		0x6987
 
 struct ps5169_eq_db {
-	const int major;
-	const int minor;
+	const u32 major;
+	const u32 minor;
 };
 
 struct ps5169_eq_data {
 	const char *propname;
 	const struct ps5169_eq_db *db;
-	const int nlevels;
+	const unsigned int nlevels;
 };
 
 /* PS5169 EQ registers */
