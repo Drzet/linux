@@ -118,7 +118,8 @@ static const struct ps5169_reg_init ps5169_oneli_init[] = {
 
 static int ps5169_apply_oneli_profile(struct regmap *regmap)
 {
-	int ret, i;
+	unsigned int i;
+	int ret;
 
 	for (i = 0; i < ARRAY_SIZE(ps5169_oneli_init); i++) {
 		const struct ps5169_reg_init *entry = &ps5169_oneli_init[i];
