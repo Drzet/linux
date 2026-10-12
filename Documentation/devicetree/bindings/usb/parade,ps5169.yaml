@@ -16,6 +16,9 @@ properties:
           - const: parade,ps5170
           - const: parade,ps5169
       - const: parade,ps5169
+      - items:
+          - const: motorola,oneli-ps5169
+          - const: parade,ps5169
 
   reg:
     maxItems: 1
@@ -138,6 +141,24 @@ oneOf:
 allOf:
   - $ref: usb-switch.yaml#
   - $ref: usb-switch-ports.yaml#
+  - if:
+      properties:
+        compatible:
+          contains:
+            const: motorola,oneli-ps5169
+    then:
+      description:
+        Motorola oneli profile is defined by a typed table in the driver;
+        the generic equalization, gain and LFPS properties cannot override it.
+      not:
+        anyOf:
+          - required: [parade,dp-eq-db]
+          - required: [parade,usb-rx-eq-db]
+          - required: [parade,usb-tx-eq-db]
+          - required: [parade,dp-set-gain]
+          - required: [parade,usb-rx-set-gain]
+          - required: [parade,usb-tx-set-gain]
+          - required: [parade,fine-tune-lfps-swing]
   - if:
       properties:
         compatible:
