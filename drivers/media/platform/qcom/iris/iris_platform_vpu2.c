@@ -24,10 +24,16 @@ static const struct iris_firmware_desc iris_milos_desc = {
 };
 
 /*
- * [INFERRED] Cape uses VPU2 host registers with HFI Gen2 based on the Waipio
- * source and the 2026-10-11 pinned host ABI comparison. The firmware binary
- * was not inspected. Require an explicit, verified firmware-name in DT
- * instead of guessing a filesystem path for Motorola's "vpu20_4v".
+ * [INFERRED] Cape uses VPU2/HFI Gen2 host operations. The public oneli
+ * Android 14 reference contains the signed-format firmware basename
+ * "vpu20_4v" (video-firmware.2.4), but its PAS 9/HFI interoperability is
+ * untested. Keep the fwname absent so Boot must explicitly select and
+ * install a firmware-name: the Android radio partition is not a Linux
+ * request_firmware() search path.
+ *
+ * Stock base DT also describes three CNOC/DDR/LLCC paths and separate
+ * nonsecure SIDs 0x2180/0x2187. The two-path ICC and one-device DMA model
+ * in this RFC are not a verified equivalent: do not enable the board node.
  */
 static const struct iris_firmware_desc iris_sm8475_gen2_desc = {
 	.firmware_data = &iris_hfi_gen2_data,
