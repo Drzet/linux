@@ -231,7 +231,7 @@ with tempfile.TemporaryDirectory(prefix="ps5169-fault-") as directory:
     executable = work / "ps5169-fault"
     c_file.write_text(preamble + "\n" + declarations + "\n" + functions + "\n" + tests)
     compile_args = ["gcc", "-std=gnu11", "-O0", "-g", "-Wall", "-Wextra",
-                    "-Werror", str(c_file), "-o", str(executable)]
+                    "-Werror", "-Wno-unused-const-variable", str(c_file), "-o", str(executable)]
     print("Compiling extracted production driver functions with injected regmap/downstream callbacks", flush=True)
     subprocess.run(compile_args, check=True)
     subprocess.run([str(executable)], check=True)
