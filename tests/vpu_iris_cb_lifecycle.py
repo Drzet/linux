@@ -39,7 +39,6 @@ HEADER = r"""
 #define PTR_ERR(p) ((long)(intptr_t)(p))
 #define IS_ERR(p) ((uintptr_t)(p) >= (uintptr_t)-4095)
 #define ERR_CAST(p) ((void *)(p))
-#define NULL ((void *)0)
 struct fwnode_handle { int unused; };
 struct device_node { const char *name; struct fwnode_handle fwnode; int refs; };
 struct device { const char *name; };
