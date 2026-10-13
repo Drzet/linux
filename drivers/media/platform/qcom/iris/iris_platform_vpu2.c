@@ -32,8 +32,9 @@ static const struct iris_firmware_desc iris_milos_desc = {
  * request_firmware() search path.
  *
  * Stock base DT also describes three CNOC/DDR/LLCC paths and separate
- * nonsecure SIDs 0x2180/0x2187. The two-path ICC and one-device DMA model
- * in this RFC are not a verified equivalent: do not enable the board node.
+ * nonsecure SIDs 0x2180/0x2187. Upstream Iris now owns separate context
+ * DMA devices. Two-path ICC and resource policy are not proven equivalent:
+ * keep this SM8475 candidate disabled.
  */
 static const struct iris_firmware_desc iris_sm8475_gen2_desc = {
 	.firmware_data = &iris_hfi_gen2_data,
@@ -163,7 +164,8 @@ const struct iris_platform_data sm8475_data = {
 	.opp_clk_tbl = sm8250_opp_clk_table,
 	.clk_rst_tbl = iris_clk_reset_table_vpu2,
 	.clk_rst_tbl_size = ARRAY_SIZE(iris_clk_reset_table_vpu2),
-	.dma_mask = 0xe0000000 - 1,
+	/* Child IOVA upper bound is enforced by iommu-ranges, not a holey mask. */
+	.dma_mask = DMA_BIT_MASK(32),
 	.inst_iris_fmts = iris_fmts_vpu2_dec,
 	.inst_iris_fmts_size = ARRAY_SIZE(iris_fmts_vpu2_dec),
 	.inst_caps = &platform_inst_cap_sm8475,

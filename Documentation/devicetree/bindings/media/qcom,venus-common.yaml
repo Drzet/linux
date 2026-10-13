@@ -80,6 +80,10 @@ properties:
     properties:
       iommus:
         maxItems: 1
+      # VPU2 stock references can also exclude an initial pixel IOVA page.
+      # Optional: upstream VPU3+ pixel contexts do not need this property.
+      iommu-ranges:
+        maxItems: 1
     required:
       - iommus
 
