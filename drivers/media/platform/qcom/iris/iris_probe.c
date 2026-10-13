@@ -14,6 +14,7 @@
 
 #include "iris_core.h"
 #include "iris_ctrls.h"
+#include "iris_dma_context.h"
 #include "iris_vidc.h"
 
 static int iris_init_icc(struct iris_core *core)
@@ -222,9 +223,19 @@ static void iris_sys_error_handler(struct work_struct *work)
 static int iris_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
+	struct device *contexts[IRIS_DMA_ROLE_COUNT];
 	struct iris_core *core;
 	u64 dma_mask;
 	int ret;
+
+	/* Foundation only: no IRQ, power, firmware, DMA or V4L2 exposure yet. */
+	if (of_device_is_compatible(dev->of_node, "qcom,sm8475-iris")) {
+		ret = iris_dma_contexts_get(dev, contexts);
+		if (ret)
+			return dev_err_probe(dev, ret, "DMA consumers unavailable\n");
+		return dev_err_probe(dev, -EOPNOTSUPP,
+				     "SM8475 DMA allocation routing is not implemented\n");
+	}
 
 	core = devm_kzalloc(&pdev->dev, sizeof(*core), GFP_KERNEL);
 	if (!core)
@@ -373,6 +384,10 @@ static const struct of_device_id iris_dt_match[] = {
 		.data = &sm8250_data,
 	},
 	{
+		.compatible = "qcom,sm8475-iris",
+		.data = &sm8475_data,
+	},
+	{
 		.compatible = "qcom,sm8550-iris",
 		.data = &sm8550_data,
 	},
@@ -402,6 +417,21 @@ static struct platform_driver qcom_iris_driver = {
 	},
 };
 
-module_platform_driver(qcom_iris_driver);
+static struct platform_driver * const iris_drivers[] = {
+	&iris_dma_context_driver,
+	&qcom_iris_driver,
+};
+
+static int __init iris_init(void)
+{
+	return platform_register_drivers(iris_drivers, ARRAY_SIZE(iris_drivers));
+}
+module_init(iris_init);
+
+static void __exit iris_exit(void)
+{
+	platform_unregister_drivers(iris_drivers, ARRAY_SIZE(iris_drivers));
+}
+module_exit(iris_exit);
 MODULE_DESCRIPTION("Qualcomm iris video driver");
 MODULE_LICENSE("GPL");

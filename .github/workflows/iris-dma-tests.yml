@@ -1,0 +1,41 @@
+name: Iris DMA foundation tests
+on:
+  push:
+    branches: [razr/vpu]
+    paths:
+      - 'tools/testing/iris/**'
+      - 'drivers/media/platform/qcom/iris/iris_dma_context*'
+      - 'Documentation/devicetree/bindings/media/qcom,sm8475-iris*'
+      - '.github/workflows/iris-dma-tests.yml'
+permissions:
+  contents: read
+jobs:
+  host:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dependencies and pinned integration
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y device-tree-compiler gcc python3-venv swig python3-dev
+          python3 -m venv /tmp/iris-dt
+          /tmp/iris-dt/bin/pip install dtschema==2026.9
+          git fetch --depth=1 origin 2b5acf108ae37040ac1e652e029bb37f5609e886
+      - name: Schema and production-code host tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH=/tmp/iris-dt/bin:$PATH
+          mkdir -p evidence
+          git rev-parse HEAD | tee evidence/commit.txt
+          gcc --version > evidence/compiler.txt
+          dtc --version > evidence/dtc-version.txt
+          dt-validate --version > evidence/dtschema-version.txt
+          python tools/testing/iris/schema-test.py evidence 2>&1 | tee evidence/schema.log
+          python tools/testing/iris/host-test.py evidence 2>&1 | tee evidence/host.log
+          sha256sum evidence/valid.dtb evidence/host-test > evidence/SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: iris-dma-host-tests
+          path: evidence
