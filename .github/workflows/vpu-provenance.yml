@@ -14,7 +14,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 20
+          fetch-depth: 48
           persist-credentials: true
       - name: Reconstruct original Qualcomm commits and compare exact source tree
         run: python3 tests/vpu_provenance_rebuild.py
