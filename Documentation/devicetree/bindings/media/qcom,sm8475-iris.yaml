@@ -56,12 +56,15 @@ properties:
       - const: cpu-cfg
       - const: video-mem
 
-  # Downstream describes separate bitstream and pixel context banks; this
-  # alone does not establish an equivalent two-endpoint upstream consumer.
-  # [INFERRED] Actual topology must be checked against the SM8475 SMMU.
-  iommus:
-    minItems: 1
-    maxItems: 2
+  # With upstream Iris DMA child devices the parent must not own both streams.
+  # Child stream values remain reference-FDT data, not verified live hardware.
+  iommus: false
+
+  # [INFERRED] Conservatively retain the stock pixel low-IOVA exclusion;
+  # generic upstream VPU3+ pixel subnodes do not require an iommu-ranges.
+  pixel:
+    required:
+      - iommu-ranges
 
   resets:
     minItems: 2
@@ -85,7 +88,11 @@ required:
   - operating-points-v2
   - resets
   - reset-names
-  - iommus
+  - '#address-cells'
+  - '#size-cells'
+  - dma-ranges
+  - non-pixel
+  - pixel
   - dma-coherent
 
 unevaluatedProperties: false

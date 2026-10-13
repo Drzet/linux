@@ -289,6 +289,16 @@ static int iris_probe(struct platform_device *pdev)
 	u64 dma_mask;
 	int ret;
 
+	/*
+	 * [INFERRED] VPU2/SM8475 DMA and queue routing can now use the
+	 * upstream non-pixel/pixel children. Keep the SoC path fail-closed
+	 * until separate firmware/PAS, MXC/MMCX and ICC policy review.
+	 * This does not restrict already-supported Iris platforms.
+	 */
+	if (of_device_is_compatible(dev->of_node, "qcom,sm8475-iris"))
+		return dev_err_probe(dev, -EOPNOTSUPP,
+				     "SM8475 resource policy not yet validated\n");
+
 	core = devm_kzalloc(&pdev->dev, sizeof(*core), GFP_KERNEL);
 	if (!core)
 		return -ENOMEM;
