@@ -46,6 +46,7 @@
 		apps_smmu: iommu@15000000 {
 			reg = <0 0x15000000 0 0x100000>;
 			#iommu-cells = <2>;
+			status = "disabled";
 		};
 
 		video-codec@aa00000 {
@@ -83,8 +84,6 @@
 				/* [INFERRED] Stock pixel pool starts above 1 MiB. */
 				iommu-ranges = <0x00100000 0xdff00000>;
 			};
-
-			status = "disabled";
 		};
 	};
 };
