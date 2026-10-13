@@ -66,6 +66,11 @@ properties:
     required:
       - iommu-ranges
 
+  # This first offline candidate only models nonsecure stream ownership.
+  secure-non-pixel: false
+  secure-pixel: false
+  secure-bitstream: false
+
   resets:
     minItems: 2
     maxItems: 2
