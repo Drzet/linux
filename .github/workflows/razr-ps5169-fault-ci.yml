@@ -37,6 +37,9 @@ jobs:
           if-no-files-found: warn
 
   arm64-and-binding:
+    # Source code changes require a new Image/modules pass. Binding/fixture
+    # only updates are checked by the lightweight conditional-schema workflow.
+    if: github.event_name == 'workflow_dispatch' || contains(toJSON(github.event.commits), 'drivers/usb/typec/mux/ps5169.c')
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     steps:
