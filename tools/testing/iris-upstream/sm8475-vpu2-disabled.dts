@@ -46,7 +46,6 @@
 		apps_smmu: iommu@15000000 {
 			reg = <0 0x15000000 0 0x100000>;
 			#iommu-cells = <2>;
-			status = "disabled";
 		};
 
 		video-codec@aa00000 {
@@ -69,6 +68,7 @@
 			reset-names = "bus", "core";
 			operating-points-v2 = <&test_opp>;
 			dma-coherent;
+			status = "disabled";
 
 			#address-cells = <1>;
 			#size-cells = <1>;
