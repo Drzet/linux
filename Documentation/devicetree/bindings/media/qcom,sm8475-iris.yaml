@@ -56,12 +56,14 @@ properties:
       - const: cpu-cfg
       - const: video-mem
 
-  # Downstream describes separate bitstream and pixel context banks; this
-  # alone does not establish an equivalent two-endpoint upstream consumer.
-  # [INFERRED] Actual topology must be checked against the SM8475 SMMU.
-  iommus:
-    minItems: 1
-    maxItems: 2
+  # Experimental independent DMA consumers. No stream belongs to controller.
+  iommus: false
+
+  qcom,dma-consumers:
+    $ref: /schemas/types.yaml#/definitions/phandle-array
+    items:
+      - description: Nonpixel (bitstream, scratch and HFI) DMA consumer
+      - description: Pixel (raw frames and DPB) DMA consumer
 
   resets:
     minItems: 2
@@ -85,7 +87,7 @@ required:
   - operating-points-v2
   - resets
   - reset-names
-  - iommus
+  - qcom,dma-consumers
   - dma-coherent
 
 unevaluatedProperties: false
