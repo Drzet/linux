@@ -5,6 +5,7 @@ on:
     paths:
       - tests/vpu_iris_cb_lifecycle.py
       - tests/vpu_iommu_ranges.py
+      - tests/vpu_iris_probe_unwind.py
       - drivers/media/platform/qcom/iris/iris_probe.c
       - drivers/iommu/of_iommu.c
       - .github/workflows/vpu-closure-lifecycle.yml
@@ -18,3 +19,4 @@ jobs:
         run: |
           python3 tests/vpu_iris_cb_lifecycle.py
           python3 tests/vpu_iommu_ranges.py
+          python3 tests/vpu_iris_probe_unwind.py
