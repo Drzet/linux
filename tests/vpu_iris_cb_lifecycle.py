@@ -9,7 +9,7 @@ import re
 import subprocess
 import tempfile
 
-ROOT = pathlib.Path(__file__).resolve().parents[2]
+ROOT = pathlib.Path(__file__).resolve().parents[1]
 SOURCE = ROOT / "drivers/media/platform/qcom/iris/iris_probe.c"
 
 def extract(name):
