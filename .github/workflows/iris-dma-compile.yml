@@ -1,0 +1,39 @@
+name: Iris DMA foundation compile
+on:
+  push:
+    branches: [razr/vpu]
+    paths:
+      - 'drivers/media/platform/qcom/iris/**'
+      - 'Documentation/devicetree/bindings/media/qcom,sm8475-iris*'
+      - '.github/workflows/iris-dma-compile.yml'
+permissions:
+  contents: read
+jobs:
+  arm64:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y gcc-aarch64-linux-gnu bison flex bc libssl-dev libelf-dev
+      - name: Compile complete Iris composite object for ARM64
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p evidence
+          git rev-parse HEAD | tee evidence/commit.txt
+          aarch64-linux-gnu-gcc --version | tee evidence/compiler.txt
+          make O=out ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- defconfig > evidence/config.log 2>&1
+          scripts/config --file out/.config -m VIDEO_QCOM_IRIS
+          make O=out ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- olddefconfig >> evidence/config.log 2>&1
+          grep '^CONFIG_VIDEO_QCOM_IRIS=m' out/.config
+          make -j4 O=out ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- W=1 drivers/media/platform/qcom/iris/qcom-iris.o 2>&1 | tee evidence/compile.log
+          file out/drivers/media/platform/qcom/iris/qcom-iris.o | tee evidence/file.txt
+          sha256sum out/drivers/media/platform/qcom/iris/qcom-iris.o | tee evidence/SHA256SUMS
+          cp out/.config evidence/config
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: iris-dma-arm64-compile
+          path: evidence
