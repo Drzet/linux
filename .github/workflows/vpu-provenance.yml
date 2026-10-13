@@ -1,0 +1,27 @@
+name: VPU v5 provenance reconstruction
+on:
+  workflow_dispatch:
+  push:
+    branches: [razr/vpu-closure-tests]
+    paths:
+      - tests/vpu_provenance_rebuild.py
+      - .github/workflows/vpu-provenance.yml
+permissions:
+  contents: write
+jobs:
+  reconstruct:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+      - name: Reconstruct original Qualcomm commits and compare exact source tree
+        run: python3 tests/vpu_provenance_rebuild.py
+      - name: Save complete old-to-new SHA map
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vpu-v5-provenance-map
+          path: /tmp/vpu-provenance.csv
+          if-no-files-found: ignore
