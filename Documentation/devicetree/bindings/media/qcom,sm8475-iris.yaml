@@ -37,7 +37,6 @@ properties:
     maxItems: 4
 
   power-domain-names:
-    minItems: 4
     items:
       - const: venus
       - const: vcodec0
@@ -60,10 +59,13 @@ properties:
   iommus: false
 
   qcom,dma-consumers:
+    description: Independently bound nonsecure DMA suppliers, nonpixel then pixel
     $ref: /schemas/types.yaml#/definitions/phandle-array
     items:
       - description: Nonpixel (bitstream, scratch and HFI) DMA consumer
+        maxItems: 1
       - description: Pixel (raw frames and DPB) DMA consumer
+        maxItems: 1
 
   resets:
     minItems: 2
