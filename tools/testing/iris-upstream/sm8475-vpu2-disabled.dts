@@ -1,0 +1,90 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Synthetic disabled upstream Iris subnode fixture, not a deployable board DT.
+ * oneli -> sm8475.dtsi -> sm8450.dtsi and /soc bus cells/ranges pinned to
+ * accepted combined kernel 2b5acf108ae37040ac1e652e029bb37f5609e886.
+ * IDs, address windows and PAS size below are stock-reference facts;
+ * resources and firmware-name are deliberately test-only placeholders.
+ */
+/dts-v1/;
+/ {
+	model = "Iris VPU2 upstream DMA validation fixture";
+	compatible = "test,iris-upstream-dma";
+	#address-cells = <2>;
+	#size-cells = <2>;
+
+	reserved-memory {
+		#address-cells = <2>;
+		#size-cells = <2>;
+		ranges;
+		video_mem: memory@9fd00000 {
+			reg = <0 0x9fd00000 0 0x700000>;
+			no-map;
+		};
+	};
+
+	test_resources: test-resources {
+		#clock-cells = <1>;
+		#power-domain-cells = <1>;
+		#reset-cells = <1>;
+		#interconnect-cells = <1>;
+		#interrupt-cells = <3>;
+		interrupt-controller;
+		#address-cells = <0>;
+	};
+	test_opp: opp-table {
+		compatible = "operating-points-v2";
+	};
+
+	soc@0 {
+		#address-cells = <2>;
+		#size-cells = <2>;
+		ranges = <0 0 0 0 0x10 0>;
+		dma-ranges = <0 0 0 0 0x10 0>;
+		compatible = "simple-bus";
+
+		apps_smmu: iommu@15000000 {
+			reg = <0 0x15000000 0 0x100000>;
+			#iommu-cells = <2>;
+			status = "disabled";
+		};
+
+		video-codec@aa00000 {
+			compatible = "qcom,sm8475-iris";
+			reg = <0 0x0aa00000 0 0xf0000>;
+			interrupt-parent = <&test_resources>;
+			interrupts = <0 174 4>;
+			memory-region = <&video_mem>;
+			firmware-name = "test-only-not-a-firmware-image.mbn";
+			clocks = <&test_resources 0>, <&test_resources 1>,
+				 <&test_resources 2>;
+			clock-names = "iface", "core", "vcodec0_core";
+			power-domains = <&test_resources 0>, <&test_resources 1>,
+					<&test_resources 2>, <&test_resources 3>;
+			power-domain-names = "venus", "vcodec0", "mxc", "mmcx";
+			interconnects = <&test_resources 0 &test_resources 1>,
+					<&test_resources 2 &test_resources 3>;
+			interconnect-names = "cpu-cfg", "video-mem";
+			resets = <&test_resources 0>, <&test_resources 1>;
+			reset-names = "bus", "core";
+			operating-points-v2 = <&test_opp>;
+			dma-coherent;
+
+			#address-cells = <1>;
+			#size-cells = <1>;
+			dma-ranges = <0 0 0 0xe0000000>;
+
+			non-pixel {
+				iommus = <&apps_smmu 0x2180 0x400>;
+				iommu-ranges = <0x25800000 0xba800000>;
+			};
+			pixel {
+				iommus = <&apps_smmu 0x2187 0x400>;
+				/* [INFERRED] Stock pixel pool starts above 1 MiB. */
+				iommu-ranges = <0x00100000 0xdff00000>;
+			};
+
+			status = "disabled";
+		};
+	};
+};
