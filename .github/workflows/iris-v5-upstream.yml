@@ -16,6 +16,23 @@ permissions:
   contents: read
 
 jobs:
+  source_changes:
+    runs-on: ubuntu-24.04
+    outputs:
+      driver_changed: ${{ steps.detect.outputs.driver_changed }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - id: detect
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --name-only HEAD^ HEAD | grep -Eq '^drivers/(iommu/of_iommu\.c|media/platform/qcom/iris/)'; then
+            echo 'driver_changed=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'driver_changed=false' >> "$GITHUB_OUTPUT"
+          fi
   host:
     runs-on: ubuntu-24.04
     steps:
@@ -50,6 +67,8 @@ jobs:
           path: evidence
 
   arm64:
+    needs: source_changes
+    if: needs.source_changes.outputs.driver_changed == 'true'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
