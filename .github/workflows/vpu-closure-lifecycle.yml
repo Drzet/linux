@@ -4,7 +4,9 @@ on:
     branches: [razr/vpu-closure-tests]
     paths:
       - tests/vpu_iris_cb_lifecycle.py
+      - tests/vpu_iommu_ranges.py
       - drivers/media/platform/qcom/iris/iris_probe.c
+      - drivers/iommu/of_iommu.c
       - .github/workflows/vpu-closure-lifecycle.yml
   workflow_dispatch:
 jobs:
@@ -13,4 +15,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Execute extracted production child registration and unwind
-        run: python3 tests/vpu_iris_cb_lifecycle.py
+        run: |
+          python3 tests/vpu_iris_cb_lifecycle.py
+          python3 tests/vpu_iommu_ranges.py
