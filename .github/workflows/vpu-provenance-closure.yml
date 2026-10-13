@@ -1,0 +1,32 @@
+name: VPU provenance capture
+on:
+  push:
+    branches: [razr/vpu-provenance-closure]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  provenance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch upstream mbox with hash and message metadata
+        run: |
+          set -euo pipefail
+          mkdir -p evidence
+          curl -fL --retry 3 'https://lore.kernel.org/all/20260926-vpu_iommu_iova_handling-v5-0-0322ca5dc10c@oss.qualcomm.com/t.mbox.gz' -o evidence/iris-v5.mbox.gz
+          gzip -t evidence/iris-v5.mbox.gz
+          sha256sum evidence/iris-v5.mbox.gz > evidence/source.sha256
+          gzip -cd evidence/iris-v5.mbox.gz > evidence/iris-v5.mbox
+          python3 - <<'PY'
+          import mailbox,json
+          from pathlib import Path
+          records=[{'message_id':m.get('Message-ID'),'author':m.get('From'),'subject':m.get('Subject')} for m in mailbox.mbox('evidence/iris-v5.mbox')]
+          Path('evidence/messages.json').write_text(json.dumps(records,indent=2))
+          assert len(records)>=13, len(records)
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: vpu-source-provenance
+          path: evidence/
