@@ -44,7 +44,7 @@ cases = [
  ('single-consumer', source.replace('qcom,dma-consumers = <&nonpixel>, <&pixel>;',
    'qcom,dma-consumers = <&nonpixel>;'), 'qcom,dma-consumers'),
  ('controller-stream', source.replace('qcom,dma-consumers = <&nonpixel>, <&pixel>;',
-   'qcom,dma-consumers = <&nonpixel>, <&pixel>; iommus = <&apps_smmu 0x2180 0x400>;'), 'iommus'),
+   'qcom,dma-consumers = <&nonpixel>, <&pixel>; iommus = <&apps_smmu 0x2180 0x400>;'), 'False schema does not allow'),
  ('secure-property', source.replace('compatible = "qcom,sm8475-iris-nonpixel";',
    'compatible = "qcom,sm8475-iris-nonpixel"; qcom,secure-context;'), 'qcom,secure-context'),
 ]
