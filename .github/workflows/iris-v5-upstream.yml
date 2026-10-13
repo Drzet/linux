@@ -1,0 +1,79 @@
+name: Iris upstream v5 VPU2 adaptation
+
+on:
+  push:
+    branches: [razr/vpu-upstream]
+    paths:
+      - 'drivers/iommu/of_iommu.c'
+      - 'drivers/media/platform/qcom/iris/**'
+      - 'Documentation/devicetree/bindings/media/qcom,venus-common.yaml'
+      - 'Documentation/devicetree/bindings/media/qcom,sm8475-iris.yaml'
+      - 'Documentation/devicetree/bindings/media/qcom,sc7180-venus.yaml'
+      - 'tools/testing/iris-upstream/**'
+      - '.github/workflows/iris-v5-upstream.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  host:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tools and exact merged dt-schema dependency
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y device-tree-compiler gcc python3-venv python3-dev swig
+          python3 -m venv /tmp/iris-v5-schema
+          /tmp/iris-v5-schema/bin/pip install \
+            'git+https://github.com/devicetree-org/dt-schema.git@840a01d414daf3e8ac0b8a386c36edb68f397189'
+          git fetch --depth=1 origin 2b5acf108ae37040ac1e652e029bb37f5609e886
+      - name: Enabled-instance schemas and extracted production routing
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH=/tmp/iris-v5-schema/bin:$PATH
+          mkdir -p evidence
+          git rev-parse HEAD | tee evidence/kernel-commit.txt
+          dt-validate --version | tee evidence/dt-schema.txt
+          gcc --version > evidence/compiler.txt
+          dtc --version > evidence/dtc.txt
+          python3 tools/testing/iris-upstream/schema-test.py evidence 2>&1 | tee evidence/schema-test.log
+          python3 tools/testing/iris-upstream/routing-test.py evidence 2>&1 | tee evidence/routing-test.log
+          sha256sum evidence/valid.dtb evidence/routing-harness > evidence/SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: iris-v5-host-schema-routing
+          path: evidence
+
+  arm64:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Cross-compiler
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y gcc-aarch64-linux-gnu bison flex bc libssl-dev libelf-dev
+      - name: Dependency-complete ARM64 Image modules and modpost
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p evidence
+          git rev-parse HEAD | tee evidence/kernel-commit.txt
+          aarch64-linux-gnu-gcc --version | tee evidence/compiler.txt
+          make O=out ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- defconfig > evidence/config.log 2>&1
+          scripts/config --file out/.config -m VIDEO_QCOM_IRIS
+          make O=out ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- olddefconfig >> evidence/config.log 2>&1
+          grep '^CONFIG_VIDEO_QCOM_IRIS=m' out/.config | tee evidence/iris-config.txt
+          make -j4 O=out ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- W=1 Image modules 2>&1 | tee evidence/build.log
+          file out/arch/arm64/boot/Image out/drivers/media/platform/qcom/iris/qcom-iris.ko | tee evidence/files.txt
+          sha256sum out/arch/arm64/boot/Image out/Module.symvers out/drivers/media/platform/qcom/iris/qcom-iris.ko > evidence/SHA256SUMS
+          cp out/.config evidence/config
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: iris-v5-arm64-build-evidence
+          path: evidence
