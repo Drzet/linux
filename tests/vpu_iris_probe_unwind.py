@@ -20,7 +20,7 @@ CORE=r"""struct iris_core {
  struct video_device *vdev_dec,*vdev_enc;
 };"""
 header=re.sub(r"struct iris_core \{.*?\};",CORE,child.HEADER,count=1,flags=re.S)
-header=header.replace("#include <stdint.h>","#include <stdint.h>\n#include <errno.h>")
+header=header.replace("#include <stdint.h>","#include <stdint.h>\n#include <errno.h>\ntypedef uint64_t u64;")
 mocks=r"""
 #define IRIS_CORE_DEINIT 0
 #define IFACEQ_CORE_PKT_SIZE 128
