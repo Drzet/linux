@@ -152,13 +152,13 @@ allOf:
         the generic equalization, gain and LFPS properties cannot override it.
       not:
         anyOf:
-          - required: [parade,dp-eq-db]
-          - required: [parade,usb-rx-eq-db]
-          - required: [parade,usb-tx-eq-db]
-          - required: [parade,dp-set-gain]
-          - required: [parade,usb-rx-set-gain]
-          - required: [parade,usb-tx-set-gain]
-          - required: [parade,fine-tune-lfps-swing]
+          - required: ['parade,dp-eq-db']
+          - required: ['parade,usb-rx-eq-db']
+          - required: ['parade,usb-tx-eq-db']
+          - required: ['parade,dp-set-gain']
+          - required: ['parade,usb-rx-set-gain']
+          - required: ['parade,usb-tx-set-gain']
+          - required: ['parade,fine-tune-lfps-swing']
   - if:
       properties:
         compatible:
