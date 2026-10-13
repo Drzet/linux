@@ -25,6 +25,14 @@ assert '#include "sm8475.dtsi"' in board
 soc = subprocess.check_output(['git', 'show', pin + ':arch/arm64/boot/dts/qcom/sm8475.dtsi'], cwd=root, text=True)
 assert '#include "sm8450.dtsi"' in soc
 
+# dt-validate skips disabled nodes. Keep the shipped fixture disabled, but
+# validate otherwise identical enabled copies so missing properties are tested.
+(out / 'disabled.dts').write_text(source)
+subprocess.run(['dtc', '-I', 'dts', '-O', 'dtb', '-o', str(out / 'disabled.dtb'),
+                str(out / 'disabled.dts')], check=True)
+assert source.count('status = "disabled";') == 4
+source = source.replace('status = "disabled";', 'status = "okay";')
+
 cases = [
  ('valid', source, None),
  ('missing-iommu', source.replace('iommus = <&apps_smmu 0x2180 0x400>;', ''), 'iommus'),
