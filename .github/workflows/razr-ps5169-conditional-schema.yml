@@ -1,0 +1,51 @@
+name: Razr PS5169 oneli conditional schema fixtures
+
+on:
+  push:
+    branches: [razr/usb-ps5169]
+    paths:
+      - 'tests/usb/ps5169/oneli-valid.dts'
+      - 'scripts/razr/ps5169-conditional-validation.py'
+      - '.github/workflows/razr-ps5169-conditional-schema.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  conditional-schema-and-probe-override:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install schema compiler and devicetree utilities
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y device-tree-compiler gcc python3-venv
+          python3 -m venv .ps5169-schema-venv
+          .ps5169-schema-venv/bin/pip install 'dtschema==2026.6'
+      - name: Execute real schema fixtures and production probe overrides
+        run: |
+          set -euo pipefail
+          git rev-parse HEAD | tee tested-source-sha.txt
+          .ps5169-schema-venv/bin/python --version | tee validator-version.txt
+          .ps5169-schema-venv/bin/dt-validate -V | tee -a validator-version.txt
+          PATH="$PWD/.ps5169-schema-venv/bin:$PATH" \
+            .ps5169-schema-venv/bin/python scripts/razr/ps5169-conditional-validation.py \
+            2>&1 | tee schema-and-probe.log
+          sha256sum tests/usb/ps5169/oneli-valid.dts \
+            Documentation/devicetree/bindings/usb/parade,ps5169.yaml \
+            drivers/usb/typec/mux/ps5169.c \
+            | tee source-sha256.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ps5169-conditional-schema-${{ github.sha }}
+          path: |
+            tested-source-sha.txt
+            validator-version.txt
+            schema-and-probe.log
+            source-sha256.txt
+            ps5169-conditional-record/
+          if-no-files-found: warn
