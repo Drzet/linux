@@ -85,6 +85,9 @@ static const struct firmware *iris_detect_firmware(struct iris_core *core,
 	ret = of_property_read_string_index(dev_of_node(core->dev), "firmware-name", 0, fw_name);
 	if (ret) {
 		*fw_name = core->iris_firmware_desc->fwname;
+		/* Some platforms require a board-verified firmware-name in DT. */
+		if (!*fw_name)
+			return ERR_PTR(-ENOENT);
 		ret = request_firmware(&firmware, *fw_name, core->dev);
 		if (ret && has_both_gens) {
 			core->iris_firmware_desc = core->iris_platform_data->firmware_desc_gen1;

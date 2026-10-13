@@ -1,0 +1,103 @@
+# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
+%YAML 1.2
+---
+$id: http://devicetree.org/schemas/media/qcom,sm8475-iris.yaml#
+$schema: http://devicetree.org/meta-schemas/core.yaml#
+
+title: Qualcomm SM8475 Iris2 video accelerator
+
+maintainers:
+  - Vikash Garodia <quic_vgarodia@quicinc.com>
+  - Dikshita Agarwal <dikshita.agarwal@oss.qualcomm.com>
+
+description: |
+  [INFERRED] Upstream SM8475-specific compatible and resource translation
+  for the VPU2 Iris controller documented by Qualcomm's Waipio/Cape video
+  device tree as shipped in Motorola's source. Firmware and board operation
+  are not verified. This is a candidate binding, not an enabled oneli node.
+
+allOf:
+  - $ref: qcom,venus-common.yaml#
+
+properties:
+  compatible:
+    const: qcom,sm8475-iris
+
+  clocks:
+    maxItems: 3
+
+  clock-names:
+    items:
+      - const: iface
+      - const: core
+      - const: vcodec0_core
+
+  power-domains:
+    minItems: 4
+    maxItems: 4
+
+  power-domain-names:
+    items:
+      - const: venus
+      - const: vcodec0
+      - const: mxc
+      - const: mmcx
+
+  firmware-name:
+    maxItems: 1
+
+  interconnects:
+    minItems: 2
+    maxItems: 2
+
+  interconnect-names:
+    items:
+      - const: cpu-cfg
+      - const: video-mem
+
+  # With upstream Iris DMA child devices the parent must not own both streams.
+  # Child stream values remain reference-FDT data, not verified live hardware.
+  iommus: false
+
+  # [INFERRED] Conservatively retain the stock pixel low-IOVA exclusion;
+  # generic upstream VPU3+ pixel subnodes do not require an iommu-ranges.
+  pixel:
+    required:
+      - iommu-ranges
+
+  # This first offline candidate only models nonsecure stream ownership.
+  secure-non-pixel: false
+  secure-pixel: false
+  secure-bitstream: false
+
+  resets:
+    minItems: 2
+    maxItems: 2
+
+  reset-names:
+    items:
+      - const: bus
+      - const: core
+
+  dma-coherent: true
+
+  operating-points-v2: true
+
+required:
+  - compatible
+  - firmware-name
+  - interconnects
+  - interconnect-names
+  - power-domain-names
+  - operating-points-v2
+  - resets
+  - reset-names
+  - '#address-cells'
+  - '#size-cells'
+  - dma-ranges
+  - non-pixel
+  - pixel
+  - dma-coherent
+
+unevaluatedProperties: false
+...

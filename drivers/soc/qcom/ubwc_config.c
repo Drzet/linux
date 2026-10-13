@@ -161,6 +161,11 @@ static const struct of_device_id qcom_ubwc_configs[] __maybe_unused = {
 	{ .compatible = "qcom,sm8250", .data = &ubwc_4_0_hbb16, },
 	{ .compatible = "qcom,sm8350", .data = &ubwc_4_0_hbb16, },
 	{ .compatible = "qcom,sm8450", .data = &ubwc_4_0_hbb16, },
+	/* [INFERRED] Waipio LPDDR5 defaults: 8 channels, MAL 32, HBB 16,
+	 * swizzle 0/1/1; matches the SM8450 UBWC 4.0 source profile.
+	 * Reference: SM8475 Waipio techpack platform UBWC_CONFIG(8,32,16,0,1,1,1).
+	 */
+	{ .compatible = "qcom,sm8475", .data = &ubwc_4_0_hbb16, },
 	{ .compatible = "qcom,sm8550", .data = &ubwc_4_0_hbb16, },
 	{ .compatible = "qcom,sm8650", .data = &ubwc_4_0_hbb16, },
 	{ .compatible = "qcom,sm8750", .data = &ubwc_5_0_hbb16, },
