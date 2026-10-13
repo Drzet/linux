@@ -4,6 +4,7 @@ on:
   push:
     branches: [razr/usb-ps5169]
     paths:
+      - 'Documentation/devicetree/bindings/usb/parade,ps5169.yaml'
       - 'tests/usb/ps5169/oneli-valid.dts'
       - 'scripts/razr/ps5169-conditional-validation.py'
       - '.github/workflows/razr-ps5169-conditional-schema.yml'
