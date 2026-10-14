@@ -172,6 +172,7 @@ struct snps_eusb2_hsphy {
 	enum phy_mode mode;
 
 	struct phy *repeater;
+	bool repeater_initialized;
 
 	const struct snps_eusb2_phy_drvdata *data;
 };
@@ -452,10 +453,31 @@ static const struct snps_eusb2_phy_drvdata sm8550_snps_eusb2_phy = {
 	.num_clks       = ARRAY_SIZE(qcom_eusb2_hsphy_clock_names),
 };
 
+static int snps_eusb2_repeater_exit(struct snps_eusb2_hsphy *phy)
+{
+	int ret;
+
+	if (!phy->repeater_initialized)
+		return 0;
+
+	ret = phy_exit(phy->repeater);
+	if (ret)
+		dev_err(&phy->phy->dev, "repeater cleanup deferred: %d\n", ret);
+	else
+		phy->repeater_initialized = false;
+
+	return ret;
+}
+
 static int snps_eusb2_hsphy_init(struct phy *p)
 {
 	struct snps_eusb2_hsphy *phy = phy_get_drvdata(p);
 	int ret;
+
+	/* A failed repeater exit still holds our reference in PHY core. */
+	ret = snps_eusb2_repeater_exit(phy);
+	if (ret)
+		return ret;
 
 	ret = regulator_bulk_enable(ARRAY_SIZE(phy->vregs), phy->vregs);
 	if (ret)
@@ -466,6 +488,7 @@ static int snps_eusb2_hsphy_init(struct phy *p)
 		dev_err(&p->dev, "repeater init failed: %d\n", ret);
 		goto disable_vreg;
 	}
+	phy->repeater_initialized = !!phy->repeater;
 
 	ret = clk_bulk_prepare_enable(phy->data->num_clks, phy->clks);
 	if (ret) {
@@ -496,7 +519,7 @@ static int snps_eusb2_hsphy_init(struct phy *p)
 disable_clks:
 	clk_bulk_disable_unprepare(phy->data->num_clks, phy->clks);
 exit_repeater:
-	phy_exit(phy->repeater);
+	snps_eusb2_repeater_exit(phy);
 disable_vreg:
 	regulator_bulk_disable(ARRAY_SIZE(phy->vregs), phy->vregs);
 
@@ -511,7 +534,12 @@ static int snps_eusb2_hsphy_exit(struct phy *p)
 
 	regulator_bulk_disable(ARRAY_SIZE(phy->vregs), phy->vregs);
 
-	phy_exit(phy->repeater);
+	/*
+	 * Our resources are off. Release our core init count even if repeater
+	 * cleanup is deferred; otherwise the next phy_init() skips this driver.
+	 * Retain the repeater reference and retry its exit before reinitializing.
+	 */
+	snps_eusb2_repeater_exit(phy);
 
 	return 0;
 }

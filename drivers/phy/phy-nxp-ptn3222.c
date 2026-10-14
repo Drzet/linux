@@ -155,8 +155,13 @@ static int ptn3222_init(struct phy *phy)
 	int ret;
 
 	if (ptn3222->oneli_profile) {
-		if (ptn3222->faulted)
-			return -EBUSY;
+		if (ptn3222->faulted) {
+			/* Failed init holds no PHY-core reference to exit. */
+			ret = ptn3222_oneli_power_off(ptn3222);
+			if (ret)
+				return ret;
+			ptn3222->faulted = false;
+		}
 		ret = ptn3222_oneli_power_on(ptn3222);
 		if (ret)
 			goto abort;
