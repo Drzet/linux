@@ -2,7 +2,7 @@ name: Iris upstream v5 VPU2 adaptation
 
 on:
   push:
-    branches: [razr/vpu-upstream]
+    branches: [razr/vpu-provenance-v5]
     paths:
       - 'drivers/iommu/of_iommu.c'
       - 'drivers/media/platform/qcom/iris/**'
