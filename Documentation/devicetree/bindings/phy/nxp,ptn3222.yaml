@@ -28,12 +28,36 @@ properties:
 
   reset-gpios: true
 
+  nxp,usb2-tuning-profile:
+    $ref: /schemas/types.yaml#/definitions/string
+    enum:
+      - motorola,oneli
+    description: |
+      Board-specific USB2 signal conditioning profile from Motorola oneli's
+      stock device tree. Programs USB2 RX control to 0x40, TX control 1 to
+      0x22 and TX control 2 to 0x64 in device/OTG mode or 0x24 in host mode.
+      Requests 1.8 V before 3.075-3.3 V and releases reset after both supplies
+      are enabled. Requires readable PTN3222 CUK/GM or HUK chip identification
+      registers; an unidentified part is rejected before any tuning writes.
+      This profile does not identify the board's populated repeater; the
+      compatible and physical reset polarity must be established separately.
+
 required:
   - compatible
   - reg
   - '#phy-cells'
 
 additionalProperties: false
+
+allOf:
+  - if:
+      required:
+        - nxp,usb2-tuning-profile
+    then:
+      required:
+        - reset-gpios
+        - vdd1v8-supply
+        - vdd3v3-supply
 
 examples:
   - |
