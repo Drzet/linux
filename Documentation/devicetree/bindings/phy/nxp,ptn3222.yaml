@@ -37,10 +37,12 @@ properties:
       stock device tree. Programs USB2 RX control to 0x40, TX control 1 to
       0x22 and TX control 2 to 0x64 in device/OTG mode or 0x24 in host mode.
       Requests 1.8 V before 3.075-3.3 V and releases reset after both supplies
-      are enabled. Requires readable PTN3222 CUK/GM or HUK chip identification
-      registers; an unidentified part is rejected before any tuning writes.
-      This profile does not identify the board's populated repeater; the
-      compatible and physical reset polarity must be established separately.
+      are enabled. Reads revision and chip identification registers before
+      tuning; read failures abort initialization. Readable IDs outside the
+      documented CUK/GM and HUK values are diagnostic only: the oneli reference
+      schematic names BUK, whose register identity is not established here.
+      This profile does not identify or qualify the board's populated repeater;
+      the compatible and physical reset polarity must be established separately.
 
 required:
   - compatible
