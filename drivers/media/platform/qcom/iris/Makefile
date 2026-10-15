@@ -24,6 +24,7 @@ qcom-iris-objs += iris_buffer.o \
              iris_vdec.o \
              iris_venc.o \
              iris_vpu2.o \
+             iris_vpu2_bw.o \
              iris_vpu3x.o \
              iris_vpu4x.o \
              iris_vpu_buffer.o \
