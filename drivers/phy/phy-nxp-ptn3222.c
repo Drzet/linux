@@ -85,7 +85,7 @@ static int ptn3222_oneli_power_on(struct ptn3222 *ptn3222)
 	return 0;
 }
 
-static int ptn3222_check_id(struct ptn3222 *ptn3222)
+static int ptn3222_read_id(struct ptn3222 *ptn3222)
 {
 	unsigned int revision, val, id = 0;
 	int i, ret;
@@ -100,11 +100,15 @@ static int ptn3222_check_id(struct ptn3222 *ptn3222)
 		id |= val << (8 * i);
 	}
 
-	/* NXP CUK Rev. 1.2 table 9; HUK Rev. 2.0 table 8. */
+	/*
+	 * NXP CUK Rev. 1.2 table 9; HUK Rev. 2.0 table 8.
+	 * The oneli schematic names BUK, whose ID is not documented here.
+	 * Report other readable IDs without rejecting the board's profile.
+	 */
 	if (id != PTN3222_CHIP_ID_CUK && id != PTN3222_CHIP_ID_HUK)
-		return dev_err_probe(&ptn3222->client->dev, -ENODEV,
-				     "unsupported chip ID %#06x (revision %#02x)\n",
-				     id, revision);
+		dev_warn(&ptn3222->client->dev,
+			 "unverified chip ID %#06x (revision %#02x), continuing oneli profile\n",
+			 id, revision);
 
 	dev_dbg(&ptn3222->client->dev, "chip ID %#06x revision %#02x\n",
 		id, revision);
@@ -176,7 +180,7 @@ static int ptn3222_init(struct phy *phy)
 	if (ptn3222->oneli_profile) {
 		/* NXP CUK Rev. 1.2 table 33: startup after both rails are valid. */
 		usleep_range(1000, 1500);
-		ret = ptn3222_check_id(ptn3222);
+		ret = ptn3222_read_id(ptn3222);
 		if (ret)
 			goto abort;
 		ret = ptn3222_apply_profile(ptn3222, ptn3222->mode);
