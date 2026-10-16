@@ -1,0 +1,119 @@
+name: Razr DisplayPort GPIO-SBU powered mux
+
+on:
+  push:
+    branches: [razr/displayport]
+    paths:
+      - 'drivers/usb/typec/mux/gpio-sbu-mux.c'
+      - 'Documentation/devicetree/bindings/usb/gpio-sbu-mux.yaml'
+      - 'scripts/razr/test-gpio-sbu-*.py'
+      - '.github/workflows/razr-gpio-sbu.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  production-host-and-schema:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout exact owned branch source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Execute production probe and removal failure harness
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p evidence
+          git rev-parse HEAD | tee evidence/tested-sha.txt
+          cc --version | head -1 | tee evidence/compiler.txt
+          python3 scripts/razr/test-gpio-sbu-supply.py . 2>&1 | tee evidence/production-host.log
+          grep -q 'GPIO_SBU_PRODUCTION_HOST_PASS 11 cases' evidence/production-host.log
+      - name: Setup dt-schema prerequisites
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            python3-venv python3-pip python3-dev gcc make bc bison flex \
+            libssl-dev libelf-dev device-tree-compiler
+          python3 -m venv /tmp/dp-schema
+          /tmp/dp-schema/bin/pip install dtschema
+          /tmp/dp-schema/bin/pip freeze > evidence/dtschema-deps.txt
+      - name: Binding and positive/negative instance validation
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="/tmp/dp-schema/bin:$PATH"
+          make O=out ARCH=arm64 DT_SCHEMA_FILES=Documentation/devicetree/bindings/usb/gpio-sbu-mux.yaml dt_binding_check \
+            2>&1 | tee evidence/binding.log
+          test -s out/Documentation/devicetree/bindings/processed-schema.json
+          python3 scripts/razr/test-gpio-sbu-schema.py \
+            out/Documentation/devicetree/bindings/processed-schema.json \
+            2>&1 | tee evidence/schema-fixtures.log
+          grep -q 'GPIO_SBU_SCHEMA_FIXTURES_PASS 4' evidence/schema-fixtures.log
+      - name: Upload focused validation logs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: gpio-sbu-host-schema-${{ github.run_id }}
+          path: evidence/
+          if-no-files-found: warn
+
+  arm64-module-link:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      ARCH: arm64
+      CROSS_COMPILE: aarch64-linux-gnu-
+    steps:
+      - name: Checkout exact kernel SHA
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Install ARM64 Kbuild dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
+            make bc bison flex libssl-dev libelf-dev libncurses-dev \
+            dwarves kmod
+      - name: Generate module configuration with real Type-C and regulator links
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p evidence
+          git rev-parse HEAD | tee evidence/tested-sha.txt
+          aarch64-linux-gnu-gcc --version | head -1 | tee evidence/cross-gcc.txt
+          make O=out defconfig 2>&1 | tee evidence/config.log
+          scripts/config --file out/.config -e MODULES -e REGULATOR \
+            -e GPIOLIB -e USB_SUPPORT -e TYPEC -m TYPEC_MUX_GPIO_SBU
+          make O=out olddefconfig 2>&1 | tee -a evidence/config.log
+          grep -Fx 'CONFIG_TYPEC_MUX_GPIO_SBU=m' out/.config
+          grep -Fx 'CONFIG_REGULATOR=y' out/.config
+          grep -Fx 'CONFIG_TYPEC=y' out/.config
+          cp out/.config evidence/actual-config
+      - name: Build dependency-complete ARM64 modules with real modpost
+        shell: bash
+        run: |
+          set -euo pipefail
+          make O=out -j"$(nproc)" modules 2>&1 | tee evidence/modules.log
+          test -s out/drivers/usb/typec/mux/gpio-sbu-mux.ko
+          test -s out/Module.symvers
+          file out/drivers/usb/typec/mux/gpio-sbu-mux.ko | tee evidence/module-file.txt
+          grep -q 'ARM aarch64' evidence/module-file.txt
+          test "$(modinfo -F vermagic out/drivers/usb/typec/mux/gpio-sbu-mux.ko | cut -d' ' -f1)" = "$(make O=out -s kernelrelease)"
+          modinfo -F depends out/drivers/usb/typec/mux/gpio-sbu-mux.ko | tee evidence/dependencies.txt
+          sha256sum out/drivers/usb/typec/mux/gpio-sbu-mux.ko out/Module.symvers | tee evidence/hashes.txt
+          printf 'ARM64_SBU_MODULE_MODPOST_PASS\n' | tee evidence/result.txt
+      - name: Upload module/link evidence (no full Image)
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: gpio-sbu-arm64-link-${{ github.run_id }}
+          path: evidence/
+          if-no-files-found: warn
