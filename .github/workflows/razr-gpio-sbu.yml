@@ -8,6 +8,13 @@ on:
       - 'Documentation/devicetree/bindings/usb/gpio-sbu-mux.yaml'
       - 'scripts/razr/test-gpio-sbu-*.py'
       - '.github/workflows/razr-gpio-sbu.yml'
+  pull_request:
+    branches: [razr/integration-candidate]
+    paths:
+      - 'drivers/usb/typec/mux/gpio-sbu-mux.c'
+      - 'Documentation/devicetree/bindings/usb/gpio-sbu-mux.yaml'
+      - 'scripts/razr/test-gpio-sbu-*.py'
+      - '.github/workflows/razr-gpio-sbu.yml'
   workflow_dispatch:
 
 permissions:
