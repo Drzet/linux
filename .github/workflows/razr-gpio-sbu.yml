@@ -29,6 +29,8 @@ jobs:
           mkdir -p evidence
           git rev-parse HEAD | tee evidence/tested-sha.txt
           cc --version | head -1 | tee evidence/compiler.txt
+          python3 --version | tee evidence/python-version.txt
+          make --version | head -1 | tee evidence/make-version.txt
           python3 scripts/razr/test-gpio-sbu-supply.py . 2>&1 | tee evidence/production-host.log
           grep -q 'GPIO_SBU_PRODUCTION_HOST_PASS 11 cases' evidence/production-host.log
       - name: Setup dt-schema prerequisites
@@ -40,8 +42,10 @@ jobs:
             python3-venv python3-pip python3-dev gcc make bc bison flex \
             libssl-dev libelf-dev device-tree-compiler
           python3 -m venv /tmp/dp-schema
-          /tmp/dp-schema/bin/pip install dtschema
+          /tmp/dp-schema/bin/pip install 'dtschema==2026.9'
           /tmp/dp-schema/bin/pip freeze > evidence/dtschema-deps.txt
+          /tmp/dp-schema/bin/python -m pip show dtschema > evidence/dtschema-version.txt
+          dtc --version | tee evidence/dtc-version.txt
       - name: Binding and positive/negative instance validation
         shell: bash
         run: |
@@ -89,6 +93,10 @@ jobs:
           mkdir -p evidence
           git rev-parse HEAD | tee evidence/tested-sha.txt
           aarch64-linux-gnu-gcc --version | head -1 | tee evidence/cross-gcc.txt
+          aarch64-linux-gnu-ld --version | head -1 | tee evidence/cross-ld.txt
+          make --version | head -1 | tee evidence/make-version.txt
+          python3 --version | tee evidence/python-version.txt
+          modinfo --version | head -1 | tee evidence/modinfo-version.txt
           make O=out defconfig 2>&1 | tee evidence/config.log
           scripts/config --file out/.config -e MODULES -e REGULATOR \
             -e GPIOLIB -e USB_SUPPORT -e TYPEC -m TYPEC_MUX_GPIO_SBU
@@ -96,8 +104,29 @@ jobs:
           grep -Fx 'CONFIG_TYPEC_MUX_GPIO_SBU=m' out/.config
           grep -Fx 'CONFIG_REGULATOR=y' out/.config
           grep -Fx 'CONFIG_TYPEC=y' out/.config
+          grep -Fx 'CONFIG_GPIOLIB=y' out/.config
           cp out/.config evidence/actual-config
-      - name: Build dependency-complete ARM64 modules with real modpost
+          sha256sum out/.config | tee evidence/config-sha256.txt
+      - name: Build matching ARM64 vmlinux provider exports before ordinary module modpost
+        shell: bash
+        run: |
+          set -euo pipefail
+          # A fresh "make modules" does not generate the built-in provider
+          # exports that module modpost needs. Build a matching vmlinux first.
+          # This does not build/package an Image or modify the board DTS.
+          make O=out -j"$(nproc)" vmlinux 2>&1 | tee evidence/vmlinux.log
+          test -s out/vmlinux
+          test -s out/Module.symvers
+          file out/vmlinux | tee evidence/vmlinux-file.txt
+          grep -q 'ARM aarch64' evidence/vmlinux-file.txt
+          for symbol in regulator_enable regulator_disable typec_switch_register typec_switch_unregister typec_mux_register typec_mux_unregister gpiod_set_value_cansleep; do
+            grep -Eq "[[:space:]]${symbol}[[:space:]]" out/Module.symvers || {
+              echo "Missing built-in provider export: ${symbol}" >&2
+              exit 1
+            }
+          done
+          sha256sum out/vmlinux out/Module.symvers | tee evidence/vmlinux-provider-hashes.txt
+      - name: Complete ARM64 SBU module link and modpost without an Image
         shell: bash
         run: |
           set -euo pipefail
@@ -108,7 +137,10 @@ jobs:
           grep -q 'ARM aarch64' evidence/module-file.txt
           test "$(modinfo -F vermagic out/drivers/usb/typec/mux/gpio-sbu-mux.ko | cut -d' ' -f1)" = "$(make O=out -s kernelrelease)"
           modinfo -F depends out/drivers/usb/typec/mux/gpio-sbu-mux.ko | tee evidence/dependencies.txt
+          aarch64-linux-gnu-nm -u out/drivers/usb/typec/mux/gpio-sbu-mux.ko | tee evidence/module-undefined-symbols.txt
           sha256sum out/drivers/usb/typec/mux/gpio-sbu-mux.ko out/Module.symvers | tee evidence/hashes.txt
+          sha256sum out/.config | tee evidence/final-config-sha256.txt
+          cmp evidence/config-sha256.txt evidence/final-config-sha256.txt
           printf 'ARM64_SBU_MODULE_MODPOST_PASS\n' | tee evidence/result.txt
       - name: Upload module/link evidence (no full Image)
         if: always()
