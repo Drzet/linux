@@ -300,6 +300,9 @@ int iris_close(struct file *filp)
 			ret = iris_sm8475_release(inst);
 		if (ret) {
 			/* Quarantine: retain mappings, instance, PM and old reservation. */
+			inst->reservation.quarantined = true;
+			__module_get(THIS_MODULE);
+			get_device(inst->core->dev);
 			iris_v4l2_fh_deinit(inst, filp);
 			mutex_unlock(&inst->lock);
 			return ret;

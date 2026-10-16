@@ -36,6 +36,7 @@ struct iris_reservation {
 	u64 mbps;
 	bool pm_held;
 	bool closed;
+	bool quarantined;
 };
 
 struct iris_resource_state {

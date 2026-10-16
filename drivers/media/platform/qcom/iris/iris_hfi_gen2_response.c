@@ -926,6 +926,28 @@ static void iris_hfi_gen2_init_src_change_param(struct iris_inst *inst)
 		subsc_params->coded_frames = 0;
 }
 
+/* A closed file has no event/VB2 consumer; retain DMA ownership until recovery. */
+static bool iris_sm8475_quarantined_response(struct iris_inst *inst,
+					     struct iris_hfi_header *hdr)
+{
+	struct iris_hfi_packet *pkt;
+	u32 offset = sizeof(*hdr), i;
+
+	if (!iris_sm8475_policy(inst->core) || !inst->reservation.quarantined)
+		return false;
+	for (i = 0; i < hdr->num_packets; i++) {
+		if (offset > hdr->size || hdr->size - offset < sizeof(*pkt))
+			break;
+		pkt = (void *)((u8 *)hdr + offset);
+		if (pkt->size < sizeof(*pkt) || pkt->size > hdr->size - offset)
+			break;
+		if (pkt->type == HFI_CMD_CLOSE && (pkt->flags & HFI_FW_FLAGS_SUCCESS))
+			inst->reservation.closed = true;
+		offset += pkt->size;
+	}
+	return true;
+}
+
 static int iris_hfi_gen2_handle_session_response(struct iris_core *core,
 						 struct iris_hfi_header *hdr)
 {
@@ -952,6 +974,10 @@ static int iris_hfi_gen2_handle_session_response(struct iris_core *core,
 		return -EINVAL;
 
 	mutex_lock(&inst->lock);
+	if (iris_sm8475_quarantined_response(inst, hdr)) {
+		mutex_unlock(&inst->lock);
+		return 0;
+	}
 	inst_hfi_gen2 = to_iris_inst_hfi_gen2(inst);
 	memset(&inst_hfi_gen2->hfi_frame_info, 0, sizeof(struct iris_hfi_frame_info));
 
