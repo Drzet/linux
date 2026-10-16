@@ -2,20 +2,12 @@ name: Razr DisplayPort GPIO-SBU powered mux
 run-name: SBU validation (${{ github.event_name }}) at ${{ github.sha }}
 
 on:
+  # Do not path-filter: an authenticated no-op push can bootstrap Actions
+  # when installation-authored commits are not generating workflow runs.
   push:
     branches: [razr/displayport]
-    paths:
-      - 'drivers/usb/typec/mux/gpio-sbu-mux.c'
-      - 'Documentation/devicetree/bindings/usb/gpio-sbu-mux.yaml'
-      - 'scripts/razr/test-gpio-sbu-*.py'
-      - '.github/workflows/razr-gpio-sbu.yml'
   pull_request:
     branches: [razr/integration-candidate]
-    paths:
-      - 'drivers/usb/typec/mux/gpio-sbu-mux.c'
-      - 'Documentation/devicetree/bindings/usb/gpio-sbu-mux.yaml'
-      - 'scripts/razr/test-gpio-sbu-*.py'
-      - '.github/workflows/razr-gpio-sbu.yml'
   workflow_dispatch:
 
 permissions:
