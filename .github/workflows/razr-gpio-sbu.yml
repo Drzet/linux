@@ -1,4 +1,5 @@
 name: Razr DisplayPort GPIO-SBU powered mux
+run-name: SBU validation (${{ github.event_name }}) at ${{ github.sha }}
 
 on:
   push:
