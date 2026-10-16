@@ -8,12 +8,16 @@
 #include <linux/mutex.h>
 #include <linux/gpio/consumer.h>
 #include <linux/platform_device.h>
+#include <linux/property.h>
+#include <linux/regulator/consumer.h>
 #include <linux/usb/typec_dp.h>
 #include <linux/usb/typec_mux.h>
 
 struct gpio_sbu_mux {
 	struct gpio_desc *enable_gpio;
 	struct gpio_desc *select_gpio;
+	struct regulator *vcc;
+	struct device *dev;
 
 	struct typec_switch_dev *sw;
 	struct typec_mux_dev *mux;
@@ -21,7 +25,29 @@ struct gpio_sbu_mux {
 	struct mutex lock; /* protect enabled and swapped */
 	bool enabled;
 	bool swapped;
+	bool removing;
 };
+
+static void gpio_sbu_mux_disable_supply(void *data)
+{
+	struct gpio_sbu_mux *sbu_mux = data;
+	int ret;
+
+	ret = regulator_disable(sbu_mux->vcc);
+	if (ret)
+		dev_warn(sbu_mux->dev, "failed to disable SBU supply: %d\n", ret);
+}
+
+static void gpio_sbu_mux_disconnect(struct gpio_sbu_mux *sbu_mux)
+{
+	mutex_lock(&sbu_mux->lock);
+	sbu_mux->removing = true;
+	sbu_mux->enabled = false;
+	if (sbu_mux->enable_gpio)
+		gpiod_set_value_cansleep(sbu_mux->enable_gpio, false);
+	mutex_unlock(&sbu_mux->lock);
+}
+
 
 static int gpio_sbu_switch_set(struct typec_switch_dev *sw,
 			       enum typec_orientation orientation)
@@ -31,6 +57,10 @@ static int gpio_sbu_switch_set(struct typec_switch_dev *sw,
 	bool swapped;
 
 	mutex_lock(&sbu_mux->lock);
+	if (sbu_mux->removing) {
+		mutex_unlock(&sbu_mux->lock);
+		return -ENODEV;
+	}
 
 	enabled = sbu_mux->enabled;
 	swapped = sbu_mux->swapped;
@@ -70,6 +100,10 @@ static int gpio_sbu_mux_set(struct typec_mux_dev *mux,
 		return -EOPNOTSUPP;
 
 	mutex_lock(&sbu_mux->lock);
+	if (sbu_mux->removing) {
+		mutex_unlock(&sbu_mux->lock);
+		return -ENODEV;
+	}
 
 	switch (state->mode) {
 	case TYPEC_STATE_SAFE:
@@ -98,12 +132,14 @@ static int gpio_sbu_mux_probe(struct platform_device *pdev)
 	struct typec_mux_desc mux_desc = { };
 	struct device *dev = &pdev->dev;
 	struct gpio_sbu_mux *sbu_mux;
+	int ret;
 
 	sbu_mux = devm_kzalloc(dev, sizeof(*sbu_mux), GFP_KERNEL);
 	if (!sbu_mux)
 		return -ENOMEM;
 
 	mutex_init(&sbu_mux->lock);
+	sbu_mux->dev = dev;
 
 	sbu_mux->enable_gpio = devm_gpiod_get_optional(dev, "enable",
 						       GPIOD_OUT_LOW);
@@ -115,6 +151,26 @@ static int gpio_sbu_mux_probe(struct platform_device *pdev)
 	if (IS_ERR(sbu_mux->select_gpio))
 		return dev_err_probe(dev, PTR_ERR(sbu_mux->select_gpio),
 				     "unable to acquire select gpio\n");
+
+	/* An absent supply keeps legacy GPIO-only boards unchanged. A declared
+	 * supply must resolve to a real regulator and remain enabled throughout
+	 * the bound Type-C switch/mux lifetime, independently of cable state.
+	 */
+	if (device_property_present(dev, "vcc-supply")) {
+		sbu_mux->vcc = devm_regulator_get_optional(dev, "vcc");
+		if (IS_ERR(sbu_mux->vcc))
+			return dev_err_probe(dev, PTR_ERR(sbu_mux->vcc),
+					     "unable to acquire SBU supply\n");
+
+		ret = regulator_enable(sbu_mux->vcc);
+		if (ret)
+			return dev_err_probe(dev, ret, "unable to enable SBU supply\n");
+
+		ret = devm_add_action_or_reset(dev, gpio_sbu_mux_disable_supply,
+					       sbu_mux);
+		if (ret)
+			return ret;
+	}
 
 	sw_desc.drvdata = sbu_mux;
 	sw_desc.fwnode = dev_fwnode(dev);
@@ -131,6 +187,7 @@ static int gpio_sbu_mux_probe(struct platform_device *pdev)
 
 	sbu_mux->mux = typec_mux_register(dev, &mux_desc);
 	if (IS_ERR(sbu_mux->mux)) {
+		gpio_sbu_mux_disconnect(sbu_mux);
 		typec_switch_unregister(sbu_mux->sw);
 		return dev_err_probe(dev, PTR_ERR(sbu_mux->mux),
 				     "failed to register typec mux\n");
@@ -145,8 +202,10 @@ static void gpio_sbu_mux_remove(struct platform_device *pdev)
 {
 	struct gpio_sbu_mux *sbu_mux = platform_get_drvdata(pdev);
 
-	gpiod_set_value_cansleep(sbu_mux->enable_gpio, 0);
-
+	/* Prevent in-flight callbacks from re-enabling OE before unpublish.
+	 * The managed regulator disable runs only after remove has returned.
+	 */
+	gpio_sbu_mux_disconnect(sbu_mux);
 	typec_mux_unregister(sbu_mux->mux);
 	typec_switch_unregister(sbu_mux->sw);
 }
