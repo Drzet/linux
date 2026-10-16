@@ -24,6 +24,7 @@ properties:
           - onnn,fsusb43l10x
           - pericom,pi3usb102
           - ti,tmuxhs4212
+          - willsemi,was7227q
       - const: gpio-sbu-mux
 
   enable-gpios:
@@ -59,6 +60,14 @@ allOf:
     then:
       required:
         - enable-gpios
+  - if:
+      properties:
+        compatible:
+          contains:
+            const: willsemi,was7227q
+    then:
+      required:
+        - vcc-supply
 
 additionalProperties: false
 
