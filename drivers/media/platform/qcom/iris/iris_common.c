@@ -13,7 +13,12 @@
 int iris_vb2_buffer_to_driver(struct vb2_buffer *vb2, struct iris_buffer *buf)
 {
 	struct vb2_v4l2_buffer *vbuf = to_vb2_v4l2_buffer(vb2);
+	struct iris_inst *inst = vb2_get_drv_priv(vb2->vb2_queue);
 
+	if (iris_sm8475_policy(inst->core) &&
+	    (vb2->planes[0].data_offset > vb2->planes[0].bytesused ||
+	     vb2->planes[0].bytesused > vb2->planes[0].length))
+		return -EINVAL;
 	buf->type = iris_v4l2_type_to_driver(vb2->type);
 	buf->index = vb2->index;
 	buf->fd = vb2->planes[0].m.fd;
@@ -52,7 +57,9 @@ int iris_process_streamon_input(struct iris_inst *inst)
 	enum iris_inst_sub_state set_sub_state = 0;
 	int ret;
 
-	iris_scale_power(inst);
+	ret = iris_scale_power(inst);
+	if (ret && iris_sm8475_policy(inst->core))
+		return ret;
 
 	ret = hfi_ops->session_start(inst, V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE);
 	if (ret)
@@ -95,7 +102,9 @@ int iris_process_streamon_output(struct iris_inst *inst)
 	bool drain_active, drc_active, first_ipsc;
 	int ret = 0;
 
-	iris_scale_power(inst);
+	ret = iris_scale_power(inst);
+	if (ret && iris_sm8475_policy(inst->core))
+		return ret;
 
 	first_ipsc = inst->sub_state & IRIS_INST_SUB_FIRST_IPSC;
 
@@ -215,6 +224,10 @@ int iris_session_streamoff(struct iris_inst *inst, u32 plane)
 		return -EINVAL;
 	}
 
+	if (iris_sm8475_policy(inst->core) && inst->reservation.closed) {
+		iris_flush_deferred_buffers(inst, buffer_type);
+		return 0;
+	}
 	ret = hfi_ops->session_stop(inst, plane);
 	if (ret)
 		goto error;
@@ -228,8 +241,40 @@ int iris_session_streamoff(struct iris_inst *inst, u32 plane)
 	return 0;
 
 error:
-	iris_kill_session(inst);
+	if (iris_sm8475_policy(inst->core)) {
+		int close_ret = iris_sm8475_close_session(inst);
+
+		iris_inst_change_state(inst, IRIS_INST_ERROR);
+		if (close_ret)
+			return close_ret;
+	} else {
+		iris_kill_session(inst);
+	}
 	iris_flush_deferred_buffers(inst, buffer_type);
 
+	return ret;
+}
+
+int iris_sm8475_close_session(struct iris_inst *inst)
+{
+	int ret;
+
+	if (inst->reservation.closed)
+		return 0;
+	if (!inst->once_per_session_set) {
+		inst->reservation.closed = true;
+		return 0;
+	}
+	reinit_completion(&inst->completion);
+	ret = inst->hfi_session_ops->session_close(inst);
+	if (!ret)
+		ret = iris_wait_for_session_response(inst, false);
+	if (!ret && !inst->reservation.closed)
+		ret = -EIO;
+	if (ret) {
+		mutex_lock(&inst->core->lock);
+		iris_sm8475_fault(inst->core, ret);
+		mutex_unlock(&inst->core->lock);
+	}
 	return ret;
 }

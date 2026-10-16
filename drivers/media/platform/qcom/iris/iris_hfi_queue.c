@@ -6,6 +6,8 @@
 #include <linux/pm_runtime.h>
 
 #include "iris_core.h"
+#include "iris_instance.h"
+#include "iris_hfi_gen2_packet.h"
 #include "iris_hfi_queue.h"
 #include "iris_vpu_common.h"
 
@@ -109,9 +111,52 @@ static int iris_hfi_queue_read(struct iris_iface_q_info *qinfo, void *packet)
 	return ret;
 }
 
+/* Final serialized guard: a fault between admission and HFI must win. */
+static int iris_sm8475_hfi_allowed(struct iris_core *core, void *data, u32 size)
+{
+	struct iris_hfi_header *hdr = data;
+	struct iris_hfi_packet *pkt;
+	struct iris_inst *inst = NULL, *iter;
+	u32 offset = sizeof(*hdr), i;
+
+	if (!iris_sm8475_policy(core))
+		return 0;
+	if (size < sizeof(*hdr) || hdr->size != size)
+		return -EINVAL;
+	if (!hdr->session_id)
+		return core->resources.uncertain ? -EIO : 0;
+	list_for_each_entry(iter, &core->instances, list)
+		if (iter->session_id == hdr->session_id)
+			inst = iter;
+	if (!inst)
+		return -EINVAL;
+	for (i = 0; i < hdr->num_packets; i++) {
+		if (offset > size || size - offset < sizeof(*pkt))
+			return -EINVAL;
+		pkt = (void *)((u8 *)data + offset);
+		if (pkt->size < sizeof(*pkt) || pkt->size > size - offset)
+			return -EINVAL;
+		if (pkt->type != HFI_CMD_CLOSE && pkt->type != HFI_CMD_STOP) {
+			if (core->resources.uncertain)
+				return -EIO;
+			if ((pkt->type == HFI_CMD_BUFFER || pkt->type == HFI_CMD_START ||
+			     pkt->type == HFI_CMD_RESUME) &&
+			    inst->reservation.state != IRIS_RES_RESERVED)
+				return -EIO;
+		}
+		offset += pkt->size;
+	}
+	return 0;
+}
+
 int iris_hfi_queue_cmd_write_locked(struct iris_core *core, void *pkt, u32 pkt_size)
 {
 	struct iris_iface_q_info *q_info = &core->command_queue;
+	int ret;
+
+	ret = iris_sm8475_hfi_allowed(core, pkt, pkt_size);
+	if (ret)
+		return ret;
 
 	if (core->state == IRIS_CORE_ERROR || core->state == IRIS_CORE_DEINIT)
 		return -EINVAL;
@@ -131,8 +176,11 @@ int iris_hfi_queue_cmd_write(struct iris_core *core, void *pkt, u32 pkt_size)
 	int ret;
 
 	ret = pm_runtime_resume_and_get(core->dev);
-	if (ret < 0)
+	if (ret < 0) {
+		if (iris_sm8475_policy(core))
+			return ret;
 		goto exit;
+	}
 
 	mutex_lock(&core->lock);
 	ret = iris_hfi_queue_cmd_write_locked(core, pkt, pkt_size);

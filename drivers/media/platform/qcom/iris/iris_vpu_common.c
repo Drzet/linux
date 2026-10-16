@@ -229,15 +229,22 @@ void iris_vpu_power_off_hw(struct iris_core *core)
 	iris_disable_unprepare_clock(core, IRIS_HW_CLK);
 }
 
-void iris_vpu_power_off(struct iris_core *core)
+int iris_vpu_power_off(struct iris_core *core)
 {
-	iris_opp_set_rate(core->dev, 0);
+	int ret = 0;
+
+	if (!iris_sm8475_policy(core))
+		iris_opp_set_rate(core->dev, 0);
 	core->iris_platform_data->vpu_ops->power_off_hw(core);
 	core->iris_platform_data->vpu_ops->power_off_controller(core);
-	iris_unset_icc_bw(core);
+	if (iris_sm8475_policy(core))
+		ret = iris_sm8475_unvote(core);
+	else
+		iris_unset_icc_bw(core);
 
 	if (!iris_vpu_watchdog(core, core->intr_status))
 		disable_irq(core->irq);
+	return ret;
 }
 
 int iris_vpu_power_on_controller(struct iris_core *core)
@@ -466,7 +473,8 @@ int iris_vpu_power_on(struct iris_core *core)
 	u32 freq;
 	int ret;
 
-	ret = iris_set_icc_bw(core, INT_MAX);
+	ret = iris_sm8475_policy(core) ? iris_sm8475_config_vote(core) :
+		iris_set_icc_bw(core, INT_MAX);
 	if (ret)
 		goto err;
 
@@ -481,7 +489,15 @@ int iris_vpu_power_on(struct iris_core *core)
 	freq = core->power.clk_freq ? core->power.clk_freq :
 				      (u32)ULONG_MAX;
 
-	iris_opp_set_rate(core->dev, freq);
+	if (iris_sm8475_policy(core)) {
+		ret = iris_sm8475_resume(core);
+		if (ret) {
+			core->iris_platform_data->vpu_ops->power_off_hw(core);
+			goto err_power_off_ctrl;
+		}
+	} else {
+		iris_opp_set_rate(core->dev, freq);
+	}
 
 	iris_vpu_set_preset_registers(core);
 
@@ -494,7 +510,10 @@ int iris_vpu_power_on(struct iris_core *core)
 err_power_off_ctrl:
 	core->iris_platform_data->vpu_ops->power_off_controller(core);
 err_unvote_icc:
-	iris_unset_icc_bw(core);
+	if (iris_sm8475_policy(core))
+		iris_sm8475_unvote(core);
+	else
+		iris_unset_icc_bw(core);
 err:
 	dev_err(core->dev, "power on failed\n");
 

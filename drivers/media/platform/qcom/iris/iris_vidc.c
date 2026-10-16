@@ -9,9 +9,11 @@
 #include <media/v4l2-mem2mem.h>
 #include <media/videobuf2-dma-contig.h>
 
+#include "iris_common.h"
 #include "iris_ctrls.h"
 #include "iris_vidc.h"
 #include "iris_instance.h"
+#include "iris_power.h"
 #include "iris_vdec.h"
 #include "iris_venc.h"
 #include "iris_vb2.h"
@@ -46,6 +48,7 @@ static void iris_add_session(struct iris_inst *inst)
 	struct iris_inst *iter;
 	u32 count = 0;
 
+	iris_sm8475_configure(inst);
 	mutex_lock(&core->lock);
 
 	list_for_each_entry(iter, &core->instances, list)
@@ -287,19 +290,37 @@ static void iris_check_num_queued_internal_buffers(struct iris_inst *inst, u32 p
 int iris_close(struct file *filp)
 {
 	struct iris_inst *inst = iris_get_inst(filp);
+	bool checked = iris_sm8475_policy(inst->core);
+	int ret;
 
+	if (checked) {
+		mutex_lock(&inst->lock);
+		ret = iris_sm8475_close_session(inst);
+		if (!ret)
+			ret = iris_sm8475_release(inst);
+		if (ret) {
+			/* Quarantine: retain mappings, instance, PM and old reservation. */
+			iris_v4l2_fh_deinit(inst, filp);
+			mutex_unlock(&inst->lock);
+			return ret;
+		}
+		iris_remove_session(inst);
+		mutex_unlock(&inst->lock);
+	}
 	v4l2_ctrl_handler_free(&inst->ctrl_handler);
 	v4l2_m2m_ctx_release(inst->m2m_ctx);
 	v4l2_m2m_release(inst->m2m_dev);
 	mutex_lock(&inst->lock);
-	iris_session_close(inst);
+	if (!checked)
+		iris_session_close(inst);
 	iris_inst_change_state(inst, IRIS_INST_DEINIT);
 	iris_v4l2_fh_deinit(inst, filp);
 	iris_destroy_all_internal_buffers(inst, V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE);
 	iris_destroy_all_internal_buffers(inst, V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE);
 	iris_check_num_queued_internal_buffers(inst, V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE);
 	iris_check_num_queued_internal_buffers(inst, V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE);
-	iris_remove_session(inst);
+	if (!checked)
+		iris_remove_session(inst);
 	mutex_unlock(&inst->lock);
 	mutex_destroy(&inst->ctx_q_lock);
 	mutex_destroy(&inst->lock);
@@ -351,6 +372,8 @@ static int iris_s_fmt_vid_mplane(struct file *filp, void *fh, struct v4l2_format
 	else if (inst->domain == ENCODER)
 		ret = iris_venc_s_fmt(inst, f);
 
+	if (!ret)
+		iris_sm8475_configure(inst);
 	mutex_unlock(&inst->lock);
 
 	return ret;
@@ -660,6 +683,48 @@ static const struct vb2_ops iris_vb2_ops = {
 	.buf_queue                      = iris_vb2_buf_queue,
 };
 
+static int iris_policy_streamoff(struct file *filp, void *fh, enum v4l2_buf_type type)
+{
+	struct iris_inst *inst = iris_get_inst(filp);
+	struct vb2_queue *q;
+	int ret;
+
+	if (!iris_sm8475_policy(inst->core))
+		return v4l2_m2m_ioctl_streamoff(filp, fh, type);
+	q = v4l2_m2m_get_vq(inst->m2m_ctx, type);
+	if (!q)
+		return -EINVAL;
+	mutex_lock(&inst->lock);
+	if (vb2_is_streaming(q)) {
+		ret = iris_session_streamoff(inst, type);
+		if (ret) {
+			iris_vb2_queue_error(inst);
+			mutex_unlock(&inst->lock);
+			return ret;
+		}
+		inst->stopped_queues |= BIT(type);
+	}
+	mutex_unlock(&inst->lock);
+	return v4l2_m2m_ioctl_streamoff(filp, fh, type);
+}
+
+static int iris_policy_reqbufs(struct file *filp, void *fh, struct v4l2_requestbuffers *b)
+{
+	struct iris_inst *inst = iris_get_inst(filp);
+	bool blocked;
+
+	if (iris_sm8475_policy(inst->core)) {
+		mutex_lock(&inst->lock);
+		mutex_lock(&inst->core->lock);
+		blocked = inst->core->resources.uncertain && !inst->reservation.closed;
+		mutex_unlock(&inst->core->lock);
+		mutex_unlock(&inst->lock);
+		if (blocked)
+			return -EIO;
+	}
+	return v4l2_m2m_ioctl_reqbufs(filp, fh, b);
+}
+
 static const struct v4l2_ioctl_ops iris_v4l2_ioctl_ops_dec = {
 	.vidioc_enum_fmt_vid_cap        = iris_enum_fmt,
 	.vidioc_enum_fmt_vid_out        = iris_enum_fmt,
@@ -670,7 +735,7 @@ static const struct v4l2_ioctl_ops iris_v4l2_ioctl_ops_dec = {
 	.vidioc_g_fmt_vid_cap_mplane    = iris_g_fmt_vid_mplane,
 	.vidioc_g_fmt_vid_out_mplane    = iris_g_fmt_vid_mplane,
 	.vidioc_enum_framesizes         = iris_enum_framesizes,
-	.vidioc_reqbufs                 = v4l2_m2m_ioctl_reqbufs,
+	.vidioc_reqbufs                 = iris_policy_reqbufs,
 	.vidioc_querybuf                = v4l2_m2m_ioctl_querybuf,
 	.vidioc_create_bufs             = v4l2_m2m_ioctl_create_bufs,
 	.vidioc_prepare_buf             = v4l2_m2m_ioctl_prepare_buf,
@@ -683,7 +748,7 @@ static const struct v4l2_ioctl_ops iris_v4l2_ioctl_ops_dec = {
 	.vidioc_subscribe_event         = iris_subscribe_event,
 	.vidioc_unsubscribe_event       = v4l2_event_unsubscribe,
 	.vidioc_streamon                = v4l2_m2m_ioctl_streamon,
-	.vidioc_streamoff               = v4l2_m2m_ioctl_streamoff,
+	.vidioc_streamoff               = iris_policy_streamoff,
 	.vidioc_try_decoder_cmd         = v4l2_m2m_ioctl_try_decoder_cmd,
 	.vidioc_decoder_cmd             = iris_dec_cmd,
 };
@@ -707,8 +772,8 @@ static const struct v4l2_ioctl_ops iris_v4l2_ioctl_ops_enc = {
 	.vidioc_s_parm                  = iris_s_parm,
 	.vidioc_g_parm                  = iris_g_parm,
 	.vidioc_streamon                = v4l2_m2m_ioctl_streamon,
-	.vidioc_streamoff               = v4l2_m2m_ioctl_streamoff,
-	.vidioc_reqbufs                 = v4l2_m2m_ioctl_reqbufs,
+	.vidioc_streamoff               = iris_policy_streamoff,
+	.vidioc_reqbufs                 = iris_policy_reqbufs,
 	.vidioc_querybuf                = v4l2_m2m_ioctl_querybuf,
 	.vidioc_create_bufs             = v4l2_m2m_ioctl_create_bufs,
 	.vidioc_prepare_buf             = v4l2_m2m_ioctl_prepare_buf,

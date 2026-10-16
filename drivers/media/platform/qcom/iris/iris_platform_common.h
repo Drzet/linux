@@ -293,6 +293,7 @@ struct iris_firmware_desc {
 };
 
 struct iris_platform_data {
+	bool checked_vpu2_policy;
 	const struct iris_firmware_desc *firmware_desc_gen1, *firmware_desc_gen2;
 
 	const struct vpu_ops *vpu_ops;

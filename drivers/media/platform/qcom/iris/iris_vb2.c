@@ -170,7 +170,13 @@ int iris_vb2_start_streaming(struct vb2_queue *q, unsigned int count)
 		goto error;
 	}
 
-	iris_scale_power(inst);
+	if (iris_sm8475_policy(inst->core) && V4L2_TYPE_IS_OUTPUT(q->type)) {
+		inst->frame_rate = MAXIMUM_FPS;
+		inst->frame_counter = 0;
+	}
+	ret = iris_scale_power(inst);
+	if (ret && iris_sm8475_policy(inst->core))
+		goto error;
 
 	ret = iris_check_session_supported(inst);
 	if (ret)
@@ -217,6 +223,16 @@ int iris_vb2_start_streaming(struct vb2_queue *q, unsigned int count)
 	return ret;
 
 error:
+	if (iris_sm8475_policy(inst->core) && inst->reservation.pm_held) {
+		int close_ret = iris_sm8475_close_session(inst);
+
+		if (close_ret) {
+			iris_vb2_queue_error(inst);
+			iris_inst_change_state(inst, IRIS_INST_ERROR);
+			mutex_unlock(&inst->lock);
+			return ret;
+		}
+	}
 	iris_helper_buffers_done(inst, q->type, VB2_BUF_STATE_QUEUED);
 	iris_inst_change_state(inst, IRIS_INST_ERROR);
 	mutex_unlock(&inst->lock);
@@ -240,11 +256,22 @@ void iris_vb2_stop_streaming(struct vb2_queue *q)
 	    !V4L2_TYPE_IS_CAPTURE(q->type))
 		goto exit;
 
-	ret = iris_session_streamoff(inst, q->type);
+	if (iris_sm8475_policy(inst->core) && (inst->stopped_queues & BIT(q->type))) {
+		inst->stopped_queues &= ~BIT(q->type);
+		ret = 0;
+	} else {
+		ret = iris_session_streamoff(inst, q->type);
+	}
 	if (ret)
 		goto exit;
 
 exit:
+	if (ret && iris_sm8475_policy(inst->core) && !inst->reservation.closed) {
+		iris_vb2_queue_error(inst);
+		iris_inst_change_state(inst, IRIS_INST_ERROR);
+		mutex_unlock(&inst->lock);
+		return;
+	}
 	iris_helper_buffers_done(inst, q->type, VB2_BUF_STATE_ERROR);
 	if (ret)
 		iris_inst_change_state(inst, IRIS_INST_ERROR);
@@ -290,6 +317,7 @@ void iris_vb2_buf_queue(struct vb2_buffer *vb2)
 	struct vb2_v4l2_buffer *vbuf = to_vb2_v4l2_buffer(vb2);
 	struct v4l2_m2m_ctx *m2m_ctx;
 	struct iris_inst *inst;
+	bool queued = false;
 	int ret = 0;
 
 	inst = vb2_get_drv_priv(vb2->vb2_queue);
@@ -330,6 +358,7 @@ void iris_vb2_buf_queue(struct vb2_buffer *vb2)
 	}
 
 	v4l2_m2m_buf_queue(m2m_ctx, vbuf);
+	queued = true;
 
 	if (inst->domain == DECODER)
 		ret = iris_vdec_qbuf(inst, vbuf);
@@ -338,6 +367,16 @@ void iris_vb2_buf_queue(struct vb2_buffer *vb2)
 
 exit:
 	if (ret) {
+		if (iris_sm8475_policy(inst->core)) {
+			if (queued) {
+				if (V4L2_TYPE_IS_OUTPUT(vb2->type))
+					v4l2_m2m_src_buf_remove_by_buf(inst->m2m_ctx, vbuf);
+				else
+					v4l2_m2m_dst_buf_remove_by_buf(inst->m2m_ctx, vbuf);
+			}
+			to_iris_buffer(vbuf)->attr |= BUF_ATTR_BUFFER_DONE;
+			iris_vb2_queue_error(inst);
+		}
 		iris_inst_change_state(inst, IRIS_INST_ERROR);
 		v4l2_m2m_buf_done(vbuf, VB2_BUF_STATE_ERROR);
 	}

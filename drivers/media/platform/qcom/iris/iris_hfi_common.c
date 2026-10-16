@@ -121,6 +121,10 @@ int iris_hfi_pm_suspend(struct iris_core *core)
 {
 	int ret;
 
+	ret = iris_sm8475_suspend(core);
+	if (ret)
+		return ret;
+
 	ret = iris_vpu_prepare_pc(core);
 	if (ret) {
 		pm_runtime_mark_last_busy(core->dev);
@@ -132,9 +136,7 @@ int iris_hfi_pm_suspend(struct iris_core *core)
 	if (ret)
 		goto error;
 
-	iris_vpu_power_off(core);
-
-	return 0;
+	return iris_vpu_power_off(core);
 
 error:
 	dev_err(core->dev, "failed to suspend\n");

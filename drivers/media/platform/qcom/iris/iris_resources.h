@@ -7,6 +7,13 @@
 #define __IRIS_RESOURCES_H__
 
 struct iris_core;
+struct iris_resource_vector;
+
+int iris_sm8475_boot_opp(struct iris_core *core);
+int iris_sm8475_select_opp(struct iris_core *core, struct iris_resource_vector *vec);
+int iris_sm8475_apply(struct iris_core *core, struct iris_resource_vector *vec);
+int iris_sm8475_unvote(struct iris_core *core);
+int iris_sm8475_config_vote(struct iris_core *core);
 
 int iris_opp_set_rate(struct device *dev, unsigned long freq);
 int iris_enable_power_domains(struct iris_core *core, struct device *pd_dev);

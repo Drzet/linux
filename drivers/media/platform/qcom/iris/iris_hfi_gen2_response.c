@@ -6,6 +6,7 @@
 #include <media/v4l2-mem2mem.h>
 
 #include "iris_hfi_gen2.h"
+#include "iris_power.h"
 #include "iris_hfi_gen2_defines.h"
 #include "iris_hfi_gen2_packet.h"
 #include "iris_vdec.h"
@@ -313,6 +314,8 @@ static void iris_hfi_gen2_handle_session_close(struct iris_inst *inst,
 		return;
 	}
 
+	if (iris_sm8475_policy(inst->core))
+		inst->reservation.closed = true;
 	complete(&inst->completion);
 }
 
@@ -457,6 +460,13 @@ static int iris_hfi_gen2_handle_session_stop(struct iris_inst *inst,
 {
 	int ret = 0;
 
+	if (iris_sm8475_policy(inst->core)) {
+		inst->stop_error = (pkt->flags & HFI_FW_FLAGS_SUCCESS) ? 0 : -EIO;
+		if (inst->stop_error) {
+			complete(&inst->completion);
+			return inst->stop_error;
+		}
+	}
 	if (pkt->port == HFI_PORT_RAW)
 		ret = iris_inst_sub_state_change_pause(inst, V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE);
 	else if (pkt->port == HFI_PORT_BITSTREAM)
@@ -677,6 +687,15 @@ static int iris_hfi_gen2_handle_src_change(struct iris_inst *inst,
 		return ret;
 
 	iris_hfi_gen2_read_input_subcr_params(inst);
+	if (iris_sm8475_policy(inst->core)) {
+		iris_sm8475_configure(inst);
+		ret = inst->state == IRIS_INST_ERROR ? -EINVAL : iris_scale_power(inst);
+		if (ret) {
+			iris_inst_change_state(inst, IRIS_INST_ERROR);
+			iris_vb2_queue_error(inst);
+			return ret;
+		}
+	}
 	iris_vdec_src_change(inst);
 
 	return 0;

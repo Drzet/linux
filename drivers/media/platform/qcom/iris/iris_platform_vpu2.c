@@ -124,9 +124,9 @@ const struct iris_platform_data milos_data = {
 };
 
 /*
- * [INFERRED] The OPP provider order is taken from SM8450 VIDEOCC mainline
- * dependencies; Motorola video DT only establishes two video GDSCs. Boot
- * must not enable the node before RPMh domains/corners are reconciled.
+ * Iris required-domain order is MXC, MMCX. The reviewed four-row policy
+ * uses source-resolved parent levels with /3 [INFERRED, USER-ACCEPTED FOR
+ * DEVELOPMENT]; this remains a disabled candidate, not hardware validation.
  */
 static const char * const sm8475_opp_pd_table[] = { "mxc", "mmcx" };
 
@@ -145,16 +145,21 @@ static struct platform_inst_caps platform_inst_cap_sm8475 = {
 /*
  * Candidate Cape/Waipio profile. The four VPP pipes, macroblock limits
  * and Gen2 packet format come from the pinned SM8475 downstream comparator;
- * they are not measurements on Motorola oneli. The SM8250 bandwidth table
- * is a [INFERRED] conservative starting policy, not Cape characterization.
+ * they are not measurements on Motorola oneli. The checked consumer policy
+ * is restricted development support, not Cape bandwidth characterization.
  */
+static const struct icc_info iris_icc_info_sm8475[] = {
+	{ "cpu-cfg",    1000, 1000 },
+	{ "video-llcc", 1000, 15000000 },
+	{ "video-mem",  1000, 15000000 },
+};
+
 const struct iris_platform_data sm8475_data = {
+	.checked_vpu2_policy = true,
 	.firmware_desc_gen2 = &iris_sm8475_gen2_desc,
 	.vpu_ops = &iris_vpu2_ops,
-	.icc_tbl = iris_icc_info_vpu2,
-	.icc_tbl_size = ARRAY_SIZE(iris_icc_info_vpu2),
-	.bw_tbl_dec = sm8250_bw_table_dec,
-	.bw_tbl_dec_size = ARRAY_SIZE(sm8250_bw_table_dec),
+	.icc_tbl = iris_icc_info_sm8475,
+	.icc_tbl_size = ARRAY_SIZE(iris_icc_info_sm8475),
 	.pmdomain_tbl = iris_pmdomain_table_vpu2,
 	.pmdomain_tbl_size = ARRAY_SIZE(iris_pmdomain_table_vpu2),
 	.opp_pd_tbl = sm8475_opp_pd_table,

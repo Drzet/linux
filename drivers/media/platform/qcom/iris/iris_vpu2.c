@@ -3,6 +3,8 @@
  * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
+#include <linux/overflow.h>
+
 #include <linux/bits.h>
 #include <linux/iopoll.h>
 #include <linux/reset.h>
@@ -46,3 +48,25 @@ const struct vpu_ops iris_vpu2_ops = {
 	.calc_freq = iris_vpu2_calc_freq,
 	.set_hwmode = iris_vpu_set_hwmode,
 };
+
+/* Checked adaptation of iris_vpu2_calc_freq, at the accepted effective rate. */
+int iris_sm8475_frequency(u32 width, u32 height, u32 fps, u64 bytes, u64 *freq)
+{
+	u64 m, vpp, vsp, bits;
+
+	*freq = 0;
+	if (!width || width > 8192 || !height || height > 8192 || !fps || fps > 480)
+		return -EINVAL;
+	m = (u64)DIV_ROUND_UP(width, 16) * DIV_ROUND_UP(height, 16);
+	if (check_mul_overflow(m, (u64)fps, &m) ||
+	    check_mul_overflow(m, 200ULL, &vpp) ||
+	    check_add_overflow(vpp, div_u64(vpp, 20), &vpp) ||
+	    check_mul_overflow(m, 25ULL, &vsp) ||
+	    check_mul_overflow(bytes, (u64)fps, &bits) ||
+	    check_mul_overflow(bits, 8ULL, &bits) ||
+	    check_mul_overflow(bits, 10ULL, &bits) ||
+	    check_add_overflow(vsp, div_u64(bits, 7), &vsp))
+		return -ERANGE;
+	*freq = max(vpp, vsp);
+	return 0;
+}

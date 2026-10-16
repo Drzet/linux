@@ -81,6 +81,13 @@ enum iris_fmt_type_cap {
  */
 
 struct iris_inst {
+	/* Resource snapshot protected by core->lock; format writers hold lock. */
+	struct iris_reservation reservation;
+	u64 admission_mbpf;
+	u64 admission_mbps;
+	int admission_error;
+	int stop_error;
+	u32 stopped_queues;
 	struct list_head		list;
 	struct iris_core		*core;
 	u32				session_id;

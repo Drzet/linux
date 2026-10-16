@@ -802,7 +802,9 @@ int iris_queue_deferred_buffers(struct iris_inst *inst, enum iris_buffer_type bu
 	struct iris_buffer *buf;
 	int ret;
 
-	iris_scale_power(inst);
+	ret = iris_scale_power(inst);
+	if (ret && iris_sm8475_policy(inst->core))
+		return ret;
 
 	if (buf_type == BUF_INPUT) {
 		v4l2_m2m_for_each_src_buf_safe(m2m_ctx, buffer, n) {

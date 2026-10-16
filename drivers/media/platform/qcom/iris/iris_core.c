@@ -17,6 +17,13 @@ void iris_core_deinit(struct iris_core *core)
 	ret = pm_runtime_resume_and_get(core->dev);
 
 	mutex_lock(&core->lock);
+	if (iris_sm8475_policy(core) && iris_sm8475_suspend(core)) {
+		iris_sm8475_fault(core, -EBUSY);
+		mutex_unlock(&core->lock);
+		if (ret >= 0)
+			pm_runtime_put_noidle(core->dev);
+		return;
+	}
 	if (core->state != IRIS_CORE_DEINIT) {
 		iris_fw_unload(core);
 

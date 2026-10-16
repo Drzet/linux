@@ -461,7 +461,9 @@ int iris_vdec_qbuf(struct iris_inst *inst, struct vb2_v4l2_buffer *vbuf)
 		}
 	}
 
-	iris_scale_power(inst);
+	ret = iris_scale_power(inst);
+	if (ret && iris_sm8475_policy(inst->core))
+		return ret;
 
 	return iris_queue_buffer(inst, buf);
 }
@@ -473,6 +475,11 @@ int iris_vdec_start_cmd(struct iris_inst *inst)
 	struct vb2_queue *dst_vq;
 	int ret;
 
+	if (iris_sm8475_policy(inst->core)) {
+		ret = iris_scale_power(inst);
+		if (ret)
+			return ret;
+	}
 	dst_vq = v4l2_m2m_get_dst_vq(inst->m2m_ctx);
 
 	if (inst->sub_state & IRIS_INST_SUB_DRC &&

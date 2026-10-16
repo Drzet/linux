@@ -14,6 +14,7 @@
 #include "iris_hfi_queue.h"
 #include "iris_platform_common.h"
 #include "iris_resources.h"
+#include "iris_power.h"
 #include "iris_state.h"
 
 struct icc_info {
@@ -82,6 +83,8 @@ struct qcom_ubwc_cfg_data;
  */
 
 struct iris_core {
+	/* Protected by lock; no instance lock may be acquired under it. */
+	struct iris_resource_state resources;
 	struct device				*dev;
 	struct device				*np_dev;
 	struct device				*p_dev;

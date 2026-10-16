@@ -12,7 +12,10 @@
 #include <linux/reset.h>
 #include <linux/soc/qcom/ubwc.h>
 
+#include <dt-bindings/interconnect/qcom,icc.h>
+
 #include "iris_core.h"
+#include "iris_power.h"
 #include "iris_ctrls.h"
 #include "iris_vidc.h"
 
@@ -20,6 +23,7 @@ static int iris_init_icc(struct iris_core *core)
 {
 	const struct icc_info *icc_tbl;
 	u32 i = 0;
+	int ret;
 
 	icc_tbl = core->iris_platform_data->icc_tbl;
 
@@ -36,7 +40,17 @@ static int iris_init_icc(struct iris_core *core)
 		core->icc_tbl[i].peak_bw = 0;
 	}
 
-	return devm_of_icc_bulk_get(core->dev, core->icc_count, core->icc_tbl);
+	ret = devm_of_icc_bulk_get(core->dev, core->icc_count, core->icc_tbl);
+	if (ret)
+		return ret;
+	if (iris_sm8475_policy(core)) {
+		for (i = 0; i < core->icc_count; i++) {
+			if (IS_ERR_OR_NULL(core->icc_tbl[i].path))
+				return -ENODEV;
+			icc_set_tag(core->icc_tbl[i].path, QCOM_ICC_TAG_ALWAYS);
+		}
+	}
+	return 0;
 }
 
 static int iris_init_power_domains(struct iris_core *core)
@@ -278,6 +292,12 @@ static void iris_sys_error_handler(struct work_struct *work)
 	struct iris_core *core =
 			container_of(work, struct iris_core, sys_error_handler.work);
 
+	if (iris_sm8475_policy(core)) {
+		mutex_lock(&core->lock);
+		iris_sm8475_fault(core, -EIO);
+		mutex_unlock(&core->lock);
+		return;
+	}
 	iris_core_deinit(core);
 	iris_core_init(core);
 }
@@ -292,7 +312,8 @@ static int iris_probe(struct platform_device *pdev)
 	/*
 	 * [INFERRED] VPU2/SM8475 DMA and queue routing can now use the
 	 * upstream non-pixel/pixel children. Keep the SoC path fail-closed
-	 * until separate firmware/PAS, MXC/MMCX and ICC policy review.
+	 * until inherited IOVA failure handling and firmware/PAS/HFI are resolved.
+	 * Reviewed resource policy does not authorize active DMA or gate removal.
 	 * This does not restrict already-supported Iris platforms.
 	 */
 	if (of_device_is_compatible(dev->of_node, "qcom,sm8475-iris"))

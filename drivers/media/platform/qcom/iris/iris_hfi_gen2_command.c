@@ -6,6 +6,7 @@
 #include <linux/bitfield.h>
 
 #include "iris_hfi_gen2.h"
+#include "iris_power.h"
 #include "iris_hfi_gen2_packet.h"
 
 #define UNSPECIFIED_COLOR_FORMAT 5
@@ -1149,12 +1150,16 @@ static int iris_hfi_gen2_session_stop(struct iris_inst *inst, u32 plane)
 					     NULL,
 					     0);
 
+	inst->stop_error = -EIO;
 	ret = iris_hfi_queue_cmd_write(inst->core, inst_hfi_gen2->packet,
 				       inst_hfi_gen2->packet->size);
 	if (ret)
 		return ret;
 
-	return iris_wait_for_session_response(inst, false);
+	ret = iris_wait_for_session_response(inst, false);
+	if (!ret && iris_sm8475_policy(inst->core))
+		ret = inst->stop_error;
+	return ret;
 }
 
 static int iris_hfi_gen2_session_pause(struct iris_inst *inst, u32 plane)
