@@ -32,8 +32,32 @@
 		interrupt-controller;
 		#address-cells = <0>;
 	};
+	/* Synthetic required-OPP targets; not real RPMh provider instances. */
+	test_pd_opp: opp-table-pd {
+		compatible = "operating-points-v2";
+		low_svs: opp-64 { opp-level = <64>; };
+		svs: opp-128 { opp-level = <128>; };
+		svs_l1: opp-192 { opp-level = <192>; };
+		nom: opp-256 { opp-level = <256>; };
+	};
 	test_opp: opp-table {
 		compatible = "operating-points-v2";
+		opp-240000000 {
+			opp-hz = /bits/ 64 <240000000>;
+			required-opps = <&svs>, <&low_svs>;
+		};
+		opp-338000000 {
+			opp-hz = /bits/ 64 <338000000>;
+			required-opps = <&svs>, <&svs>;
+		};
+		opp-366000000 {
+			opp-hz = /bits/ 64 <366000000>;
+			required-opps = <&svs_l1>, <&svs_l1>;
+		};
+		opp-444000000 {
+			opp-hz = /bits/ 64 <444000000>;
+			required-opps = <&nom>, <&nom>;
+		};
 	};
 
 	soc@0 {
@@ -63,8 +87,9 @@
 					<&test_resources 2>, <&test_resources 3>;
 			power-domain-names = "venus", "vcodec0", "mxc", "mmcx";
 			interconnects = <&test_resources 0 &test_resources 1>,
-					<&test_resources 2 &test_resources 3>;
-			interconnect-names = "cpu-cfg", "video-mem";
+					<&test_resources 2 &test_resources 3>,
+					<&test_resources 4 &test_resources 5>;
+			interconnect-names = "cpu-cfg", "video-llcc", "video-mem";
 			resets = <&test_resources 0>, <&test_resources 1>;
 			reset-names = "bus", "core";
 			operating-points-v2 = <&test_opp>;

@@ -47,12 +47,17 @@ properties:
     maxItems: 1
 
   interconnects:
-    minItems: 2
-    maxItems: 2
+    description: |
+      Configuration path from APPSS_PROC to VENUS_CFG, VIDEO to LLCC,
+      and a disjoint LLCC to EBI path. Use ALWAYS tags on both endpoints.
+      The VIDEO path must terminate at LLCC, not overlap the DDR path.
+    minItems: 3
+    maxItems: 3
 
   interconnect-names:
     items:
       - const: cpu-cfg
+      - const: video-llcc
       - const: video-mem
 
   # With upstream Iris DMA child devices the parent must not own both streams.
@@ -81,7 +86,14 @@ properties:
 
   dma-coherent: true
 
-  operating-points-v2: true
+  operating-points-v2:
+    description: |
+      Restricted development policy uses consumer frequencies 240, 338, 366
+      and 444 MHz, with required-opps ordered MXC, MMCX. The required levels
+      are respectively SVS/LOW_SVS, SVS/SVS, SVS_L1/SVS_L1 and NOM/NOM.
+      Consumer division by three is an accepted development assumption,
+      not a physical divider measurement. Provider rounding and readback
+      must remain within the row's parent/supply envelope.
 
 required:
   - compatible

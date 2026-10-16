@@ -94,6 +94,11 @@ def omit_child(text, name):
     return result
 
 cases = [
+    ("missing-llcc-name", enabled.replace('"cpu-cfg", "video-llcc", "video-mem"',
+                                         '"cpu-cfg", "video-mem"'), "interconnect-names"),
+    ("two-paths", enabled.replace(',\n\t\t\t\t\t<&test_resources 4 &test_resources 5>', ''), "interconnects"),
+    ("wrong-path-order", enabled.replace('"cpu-cfg", "video-llcc", "video-mem"',
+                                        '"cpu-cfg", "video-mem", "video-llcc"'), "video-llcc"),
     ("valid", enabled, None),
     ("missing-pixel", omit_child(enabled, "pixel"), "pixel"),
     ("missing-nonpixel", omit_child(enabled, "non-pixel"), "non-pixel"),
