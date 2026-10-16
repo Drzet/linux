@@ -150,7 +150,7 @@ unlock:
 	return ret;
 }
 
-int iris_vb2_start_streaming(struct vb2_queue *q, unsigned int count)
+static int iris_start_streaming(struct vb2_queue *q, unsigned int count)
 {
 	enum iris_buffer_type buf_type;
 	struct iris_inst *inst;
@@ -233,11 +233,38 @@ error:
 			return ret;
 		}
 	}
-	iris_helper_buffers_done(inst, q->type, VB2_BUF_STATE_QUEUED);
+	if (iris_sm8475_policy(inst->core)) {
+		iris_vb2_queue_error(inst);
+		iris_helper_buffers_done(inst, q->type, VB2_BUF_STATE_ERROR);
+	} else {
+		iris_helper_buffers_done(inst, q->type, VB2_BUF_STATE_QUEUED);
+	}
 	iris_inst_change_state(inst, IRIS_INST_ERROR);
 	mutex_unlock(&inst->lock);
 
 	return ret;
+}
+
+/*
+ * VB2 forcibly reclaims ACTIVE buffers if this callback returns an error.
+ * SM8475 must not submit firmware work here: CLOSE can itself fail. Its
+ * fallible firmware start runs only after vb2_core_streamon has committed
+ * streaming and will no longer run failed-callback reclamation.
+ */
+int iris_vb2_start_streaming(struct vb2_queue *q, unsigned int count)
+{
+	struct iris_inst *inst = vb2_get_drv_priv(q);
+
+	if (iris_sm8475_policy(inst->core))
+		return 0;
+	return iris_start_streaming(q, count);
+}
+
+int iris_vb2_start_after_streamon(struct vb2_queue *q)
+{
+	if (!vb2_is_streaming(q) || !vb2_start_streaming_called(q))
+		return -EINVAL;
+	return iris_start_streaming(q, 0);
 }
 
 void iris_vb2_stop_streaming(struct vb2_queue *q)

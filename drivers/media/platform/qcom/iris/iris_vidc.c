@@ -111,6 +111,8 @@ iris_m2m_queue_init(void *priv, struct vb2_queue *src_vq, struct vb2_queue *dst_
 	src_vq->drv_priv = inst;
 	src_vq->buf_struct_size = sizeof(struct iris_buffer);
 	src_vq->min_reqbufs_allocation = MIN_BUFFERS;
+	if (iris_sm8475_policy(inst->core))
+		src_vq->min_queued_buffers = 0;
 	src_vq->dev = iris_get_cb_dev(inst, BUF_INPUT);
 	src_vq->lock = &inst->ctx_q_lock;
 	ret = vb2_queue_init(src_vq);
@@ -125,6 +127,8 @@ iris_m2m_queue_init(void *priv, struct vb2_queue *src_vq, struct vb2_queue *dst_
 	dst_vq->drv_priv = inst;
 	dst_vq->buf_struct_size = sizeof(struct iris_buffer);
 	dst_vq->min_reqbufs_allocation = MIN_BUFFERS;
+	if (iris_sm8475_policy(inst->core))
+		dst_vq->min_queued_buffers = 0;
 	dst_vq->dev = iris_get_cb_dev(inst, BUF_OUTPUT);
 	dst_vq->lock = &inst->ctx_q_lock;
 
@@ -686,6 +690,41 @@ static const struct vb2_ops iris_vb2_ops = {
 	.buf_queue                      = iris_vb2_buf_queue,
 };
 
+static int iris_policy_streamon(struct file *filp, void *fh, enum v4l2_buf_type type)
+{
+	struct iris_inst *inst = iris_get_inst(filp);
+	struct vb2_queue *q;
+	bool already_streaming, blocked;
+	int ret;
+
+	if (!iris_sm8475_policy(inst->core))
+		return v4l2_m2m_ioctl_streamon(filp, fh, type);
+	q = v4l2_m2m_get_vq(inst->m2m_ctx, type);
+	if (!q)
+		return -EINVAL;
+	mutex_lock(&inst->lock);
+	mutex_lock(&inst->core->lock);
+	blocked = inst->core->resources.uncertain || inst->reservation.closed ||
+		  inst->state == IRIS_INST_ERROR;
+	mutex_unlock(&inst->core->lock);
+	mutex_unlock(&inst->lock);
+	if (blocked)
+		return -EIO;
+	already_streaming = vb2_is_streaming(q);
+	ret = v4l2_m2m_ioctl_streamon(filp, fh, type);
+	if (ret || already_streaming)
+		return ret;
+
+	/*
+	 * On a firmware/CLOSE failure keep VB2 streaming and ACTIVE ownership.
+	 * Error ioctls cannot cancel it until the cleanup preflight quiesces it.
+	 */
+	ret = iris_vb2_start_after_streamon(q);
+	if (ret)
+		iris_vb2_queue_error(inst);
+	return ret;
+}
+
 static int iris_policy_streamoff(struct file *filp, void *fh, enum v4l2_buf_type type)
 {
 	struct iris_inst *inst = iris_get_inst(filp);
@@ -698,7 +737,17 @@ static int iris_policy_streamoff(struct file *filp, void *fh, enum v4l2_buf_type
 	if (!q)
 		return -EINVAL;
 	mutex_lock(&inst->lock);
-	if (vb2_is_streaming(q)) {
+	mutex_lock(&inst->core->lock);
+	ret = inst->core->resources.uncertain && !inst->reservation.closed ? -EIO : 0;
+	mutex_unlock(&inst->core->lock);
+	if (ret) {
+		iris_vb2_queue_error(inst);
+		mutex_unlock(&inst->lock);
+		return ret;
+	}
+	/* Failed start/cancellation may leave ownership without q->streaming. */
+	if (vb2_is_streaming(q) ||
+	    (!inst->reservation.closed && inst->reservation.state != IRIS_RES_INACTIVE)) {
 		ret = iris_session_streamoff(inst, type);
 		if (ret) {
 			iris_vb2_queue_error(inst);
@@ -750,7 +799,7 @@ static const struct v4l2_ioctl_ops iris_v4l2_ioctl_ops_dec = {
 	.vidioc_g_selection             = iris_g_selection,
 	.vidioc_subscribe_event         = iris_subscribe_event,
 	.vidioc_unsubscribe_event       = v4l2_event_unsubscribe,
-	.vidioc_streamon                = v4l2_m2m_ioctl_streamon,
+	.vidioc_streamon                = iris_policy_streamon,
 	.vidioc_streamoff               = iris_policy_streamoff,
 	.vidioc_try_decoder_cmd         = v4l2_m2m_ioctl_try_decoder_cmd,
 	.vidioc_decoder_cmd             = iris_dec_cmd,
@@ -774,7 +823,7 @@ static const struct v4l2_ioctl_ops iris_v4l2_ioctl_ops_enc = {
 	.vidioc_s_selection             = iris_s_selection,
 	.vidioc_s_parm                  = iris_s_parm,
 	.vidioc_g_parm                  = iris_g_parm,
-	.vidioc_streamon                = v4l2_m2m_ioctl_streamon,
+	.vidioc_streamon                = iris_policy_streamon,
 	.vidioc_streamoff               = iris_policy_streamoff,
 	.vidioc_reqbufs                 = iris_policy_reqbufs,
 	.vidioc_querybuf                = v4l2_m2m_ioctl_querybuf,

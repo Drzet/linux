@@ -388,7 +388,8 @@ unlock:
 int iris_sm8475_release(struct iris_inst *inst)
 {
 	struct iris_core *core = inst->core;
-	struct iris_reservation inactive = { .state = IRIS_RES_INACTIVE };
+	/* CLOSE is firmware quiescence, independent of the released demand. */
+	struct iris_reservation inactive = { .state = IRIS_RES_INACTIVE, .closed = true };
 	struct iris_resource_vector total;
 	bool put_pm = false;
 	int ret;
