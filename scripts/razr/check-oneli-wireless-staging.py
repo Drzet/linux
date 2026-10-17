@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-only
-"""Check the *compiled* inactive WCN6855 board topology and resolved Kconfig.
+"""Check the *compiled* enabled WCN6855 candidate topology and resolved Kconfig.
 
-Uses dtc's fdtget, no access to hardware/firmware; does not activate radios.
+Uses dtc's fdtget, no access to hardware/firmware; does not execute physical radios.
 """
 import argparse
 import pathlib
@@ -85,10 +85,11 @@ def main():
         (rsc + "/regulators-0", "vdd-l6-l9-l10-supply", "s12b"),
         (rsc + "/regulators-1", "vdd-l2-l8-supply", "s1c"),
         (rsc + "/regulators-3", "vdd-l7-bob-supply", "bobc"),
+        (rsc + "/regulators-1", "vdd-l10-supply", "s12b"),
     ]:
         check(n(root, prop) == [phandles[name]], prop + " upstream graph")
 
-    # The complete radio chain remains inactive, including its ancestors.
+    # The complete chosen radio chain is active, including its providers.
     for node in [
         rsc + "/regulators-0",
         rsc + "/regulators-1",
@@ -101,7 +102,21 @@ def main():
         uart20,
         bt,
     ]:
-        check(get(node, "status", "s") == "disabled", node + " unexpectedly enabled")
+        check(get(node, "status", "s") == "okay", node + " unexpectedly disabled")
+    # WLAN_EN must not be forced low by pinctrl before GPIOD_ASIS probe.
+    gpio80 = tlmm + "/oneli-radio-wlan-en-state"
+    for property_name in ("output-low", "output-high"):
+        forced = subprocess.run(["fdtget", str(a.dtb), gpio80, property_name],
+                                capture_output=True, text=True)
+        check(forced.returncode != 0, "WLAN_EN level forced by pinctrl")
+    check(get(gpio80, "pins", "s") == "gpio80", "WLAN_EN TLMM state")
+    # Guard existing nonradio bring-up boundaries; this is not blanket enablement.
+    for inactive in [soc + "/usb@a6f8800", soc + "/geniqup@9c0000/i2c@994000",
+                     soc + "/phy@88e000"]:
+        probe = subprocess.run(["fdtget", "-t", "s", str(a.dtb), inactive, "status"],
+                               capture_output=True, text=True)
+        if probe.returncode == 0:
+            check(probe.stdout.strip() == "disabled", inactive + " newly enabled")
     check(n(pmu, "wlan-enable-gpios")[1] == 80, "wlan-en ownership")
     check(n(pmu, "bt-enable-gpios")[1] == 81, "bt-en ownership")
     check(n(pmu, "swctrl-gpios")[1] == 82, "switch state ownership")
@@ -119,13 +134,14 @@ def main():
     cfg = dict(s.split("=", 1) for s in config if s.startswith("CONFIG_") and "=" in s)
     required = {
         "CONFIG_REGULATOR_QCOM_RPMH": "y",
+        "CONFIG_FW_LOADER": "y",
         "CONFIG_POWER_SEQUENCING": "y",
-        "CONFIG_POWER_SEQUENCING_QCOM_WCN": "m",
+        "CONFIG_POWER_SEQUENCING_QCOM_WCN": "y",
         "CONFIG_PCIE_QCOM": "y",
-        "CONFIG_PHY_QCOM_QMP": "m",
-        "CONFIG_PHY_QCOM_QMP_PCIE": "m",
+        "CONFIG_PHY_QCOM_QMP": "y",
+        "CONFIG_PHY_QCOM_QMP_PCIE": "y",
         "CONFIG_PCI_PWRCTRL_GENERIC": "y",
-        "CONFIG_PCI_PWRCTRL_PWRSEQ": "m",
+        "CONFIG_PCI_PWRCTRL_PWRSEQ": "y",
         "CONFIG_ATH11K": "m",
         "CONFIG_ATH11K_PCI": "m",
         "CONFIG_MHI_BUS": "m",
@@ -144,7 +160,7 @@ def main():
     check(not missing, "resolved Kconfig differs: " + str(missing))
     print(f"PASS: {len(required)} resolved Kconfig requirements, "
           "seven actual regulator phandles, selector grids, 11 PMU supplies, "
-          "five grouped parent edges, disabled ancestry, GPIO and UART7 ownership")
+          "six grouped parent edges, enabled ancestry, GPIO80 preservation and UART7 ownership")
 
 
 if __name__ == "__main__":

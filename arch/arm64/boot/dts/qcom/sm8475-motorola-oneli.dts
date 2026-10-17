@@ -94,7 +94,8 @@
 };
 
 /*
- * [INFERRED] Review-only RPMh rail reconstruction for Motorola oneli.
+ * [INFERRED] Motorola RPMh radio rails, now enabled for a controlled
+ * development integration; source envelopes, not measured voltages.
  *
  * Rail resource names, UFS consumers, permitted voltage ranges and
  * initial voltage settings are extracted from Motorola Cape DT at
@@ -106,15 +107,15 @@
  * comparator; some grouped parents are schematic-backed, while PMR735A
  * L7's HDK-derived parent and actual B_PLUS input remain unverified.
  *
- * Keep the provider devices disabled until the parent supply topology
- * and bootloader/firmware regulator ownership are verified. This must
- * not drive any rail in the present bring-up DT.
+ * The PM8350/PM8350C/PMR735A providers are enabled for this radio
+ * candidate only. Real parent wiring and voltage remain untested;
+ * UFS, USB, Type-C, display and other peripherals remain disabled.
  */
 &apps_rsc {
 	regulators-0 {
 		compatible = "qcom,pm8350-rpmh-regulators";
 		qcom,pmic-id = "b";
-		status = "disabled";
+		status = "okay";
 
 		/*
 		 * B_PLUS feeds the three buck inputs physically, but is a
@@ -166,10 +167,11 @@
 	regulators-1 {
 		compatible = "qcom,pm8350c-rpmh-regulators";
 		qcom,pmic-id = "c";
-		status = "disabled";
+		status = "okay";
 
-		/* Oneli source: PM8350C L2/L8 share the S1C input. */
+		/* Oneli source: L2/L8 share S1C; L10 is fed by S12B. */
 		vdd-l2-l8-supply = <&oneli_s1c>;
+		vdd-l10-supply = <&oneli_s12b>;
 
 		oneli_s1c: smps1 {
 			regulator-name = "oneli-s1c-radio-rf-dp-parent";
@@ -200,7 +202,7 @@
 	regulators-3 {
 		compatible = "qcom,pmr735a-rpmh-regulators";
 		qcom,pmic-id = "e";
-		status = "disabled";
+		status = "okay";
 
 		vdd-l7-bob-supply = <&oneli_bobc>;
 
@@ -218,7 +220,7 @@
 	};
 };
 
-/* UFS is still disabled. The supply phandles are review-only. */
+/* UFS consumers remain disabled despite enabling shared providers. */
 &ufs_mem_hc {
 	vcc-supply = <&oneli_l7b>;
 	vccq-supply = <&oneli_l9b>;
@@ -345,24 +347,26 @@
  * identities are unknown and must be learned through enumeration, NOT
  * fabricated or used as a prerequisite to disabled-source staging.
  *
- * Every new endpoint/provider remains disabled. Neither the UART20
- * QUP2 wrapper nor the PCIe0/PHY is enabled. There is one owner for
+ * Enable only the radio provider/PMU/PCIe0/PHY/QUP2/UART20 path here.
+ * All other board peripheral paths retain their previous state.
+ * There is one owner for
  * GPIO80 WLAN_EN, GPIO81 BT_EN and GPIO204 XO, not separate per-radio
  * GPIO consumers. SWCTRL GPIO82 has an upstream binding property but
  * the current WCN6855 sequencer does not drive it.
  *
  * PMR735A L7E is a shared WLAN antenna-switch / BT ASD 2.8V source.
- * vddasd is intentionally present to name the one shared consumer:
- * it needs the separately reviewed Wireless WCN6855 property-present
- * driver before this entire radio tree could be enabled.
+ * vddasd supplies both target sequences via the reviewed WCN6855
+ * property-present pwrseq implementation at Wireless 5d191e2dd449cb226eecd7086f76fc202a6f2257.
+ * No physical radio/firmware operation has been demonstrated.
  */
 &tlmm {
 	oneli_radio_wlan_en: oneli-radio-wlan-en-state {
 		pins = "gpio80";
 		function = "gpio";
 		drive-strength = <16>;
-		bias-pull-down;
-		output-low;
+		/* Do not force output-low at pinctrl: pwrseq uses GPIOD_ASIS
+		 * to preserve an already-active WLAN enable state on probe. */
+		bias-disable;
 	};
 
 	oneli_radio_bt_en: oneli-radio-bt-en-state {
@@ -395,7 +399,7 @@
 / {
 	oneli_wcn6855: wcn6855-pmu {
 		compatible = "qcom,wcn6855-pmu";
-		status = "disabled";
+		status = "okay";
 
 		pinctrl-names = "default";
 		pinctrl-0 = <&oneli_radio_wlan_en>, <&oneli_radio_bt_en>,
@@ -465,7 +469,7 @@
 /* The upstream SoC already owns PCIe0 PERST94, CLKREQ95, WAKE96. */
 &pcie0 {
 	max-link-speed = <2>;
-	status = "disabled";
+	status = "okay";
 };
 
 /*
@@ -475,7 +479,7 @@
 &pcie0_phy {
 	vdda-phy-supply = <&oneli_l5b>;
 	vdda-pll-supply = <&oneli_l10c>;
-	status = "disabled";
+	status = "okay";
 };
 
 &pcieport0 {
@@ -483,7 +487,7 @@
 		/* Expected generic match, not a measured oneli endpoint ID. */
 		compatible = "pci17cb,1103";
 		reg = <0x10000 0x0 0x0 0x0 0x0>;
-		status = "disabled";
+		status = "okay";
 
 		vddrfacmn-supply = <&oneli_pmu_rfa_cmn>;
 		vddaon-supply = <&oneli_pmu_aon>;
@@ -498,16 +502,20 @@
 };
 
 /*
- * QUP2 wrapper remains disabled; UART20 uses the inherited
- * qup_uart20_default TLMM76/77/78/79 hardware mux and GENI S5.
- * UART7 / serial0 remains the only enabled diagnostic serial.
+ * QUP2 and UART20 are enabled for the BT serdev child. The inherited
+ * qup_uart20_default preserves TLMM76/77/78/79 pinmux.
+ * UART7 / serial0 remains the dedicated diagnostic console.
  */
+&qupv3_id_2 {
+	status = "okay";
+};
+
 &uart20 {
-	status = "disabled";
+	status = "okay";
 
 	oneli_bluetooth: bluetooth {
 		compatible = "qcom,wcn6855-bt";
-		status = "disabled";
+		status = "okay";
 
 		vddrfacmn-supply = <&oneli_pmu_rfa_cmn>;
 		vddaon-supply = <&oneli_pmu_aon>;

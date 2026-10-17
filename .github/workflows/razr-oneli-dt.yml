@@ -1,4 +1,4 @@
-name: Razr oneli boot DT validation
+name: Razr oneli radio combined candidate
 
 on:
   push:
@@ -8,6 +8,8 @@ on:
       - 'arch/arm64/boot/dts/qcom/sm8475*'
       - 'arch/arm64/boot/dts/qcom/Makefile'
       - 'arch/arm64/configs/razr-oneli-wireless.config'
+      - 'drivers/power/sequencing/pwrseq-qcom-wcn.c'
+      - 'scripts/razr/test-wcn6855-vddasd.py'
       - 'scripts/razr/check-oneli-wireless-staging.py'
       - 'Documentation/devicetree/bindings/arm/qcom.yaml'
       - 'Documentation/devicetree/bindings/pinctrl/qcom,sm8450-tlmm.yaml'
@@ -118,7 +120,7 @@ jobs:
             out/arch/arm64/boot/dts/qcom/sm8475-motorola-oneli.dtb \
             2> evidence/decompile-warnings.log
 
-      - name: Verify inactive wireless FDT, voltage selectors and resolved config
+      - name: Verify enabled wireless FDT, voltage selectors and resolved config
         shell: bash
         run: |
           set -euo pipefail
@@ -126,6 +128,13 @@ jobs:
           python3 scripts/razr/check-oneli-wireless-staging.py \
             out/arch/arm64/boot/dts/qcom/sm8475-motorola-oneli.dtb \
             out/.config 2>&1 | tee evidence/oneli-wireless-staging-check.log
+
+      - name: Wireless production-source host tests (cheap gate)
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/razr/test-wcn6855-vddasd.py . 2>&1 | tee evidence/wcn6855-production-host.log
+          grep -q WCN6855_PRODUCTION_HOST_PASS evidence/wcn6855-production-host.log
 
       - name: Export evidence
         if: always()
@@ -146,5 +155,152 @@ jobs:
         with:
           name: oneli-dt-${{ github.run_id }}-${{ github.run_attempt }}
           path: evidence/
+          retention-days: 30
+          if-no-files-found: warn
+
+
+  combined-radio:
+    needs: dt
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    env:
+      ARCH: arm64
+      CROSS_COMPILE: aarch64-linux-gnu-
+    steps:
+      - name: Check out combined radio candidate
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Reuse cheap job's exact DTB and config
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: oneli-dt-${{ github.run_id }}-${{ github.run_attempt }}
+          path: dt-evidence
+
+      - name: Install ARM64 build utilities
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p evidence release
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
+            make bc bison flex libssl-dev libelf-dev libncurses-dev \
+            python3 perl rsync cpio kmod zstd xz-utils dwarves file
+          git rev-parse HEAD | tee evidence/kernel-sha.txt
+          {
+            aarch64-linux-gnu-gcc --version | head -1
+            aarch64-linux-gnu-ld --version | head -1
+            make --version | head -1
+            python3 --version
+            zstd --version
+          } > evidence/toolchain.txt
+
+      - name: Match the checked DTB build's resolved configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          (cd dt-evidence && sha256sum -c SHA256SUMS) \
+            > evidence/cheap-evidence-hash-check.log
+          test -s dt-evidence/sm8475-motorola-oneli.dtb
+          test -s dt-evidence/kernel.config
+          make O=out defconfig 2>&1 | tee evidence/configure.log
+          scripts/kconfig/merge_config.sh -m -O out \
+            out/.config arch/arm64/configs/razr-oneli-wireless.config \
+            2>&1 | tee evidence/config-merge.log
+          make O=out olddefconfig 2>&1 | tee evidence/resolved-config.log
+          cmp out/.config dt-evidence/kernel.config
+          cp dt-evidence/kernel.config release/kernel.config
+          cp dt-evidence/sm8475-motorola-oneli.dtb release/sm8475-motorola-oneli.dtb
+          cp arch/arm64/configs/razr-oneli-wireless.config release/radio-fragment.config
+          sha256sum out/.config release/sm8475-motorola-oneli.dtb \
+            > evidence/inputs.sha256
+          for x in CONFIG_POWER_SEQUENCING_QCOM_WCN=y \
+                   CONFIG_PCI_PWRCTRL_PWRSEQ=y CONFIG_PHY_QCOM_QMP_PCIE=y \
+                   CONFIG_REGULATOR_QCOM_RPMH=y CONFIG_PCIE_QCOM=y \
+                   CONFIG_BT_LE=y CONFIG_ATH11K_PCI=m CONFIG_BT_HCIUART=m; do
+            grep -Fx "$x" out/.config
+          done
+
+      - name: One dependency-complete AArch64 Image and modules build
+        shell: bash
+        run: |
+          set -euo pipefail
+          make O=out -j4 Image modules 2>&1 | tee evidence/arm64-image-modules.log
+          test -s out/arch/arm64/boot/Image
+          test -s out/Module.symvers
+          test -s out/vmlinux
+          file out/vmlinux out/arch/arm64/boot/Image \
+            | tee evidence/image-files.txt
+          file out/drivers/net/wireless/ath/ath11k/ath11k_pci.ko \
+               out/drivers/bluetooth/hci_uart.ko \
+            | tee evidence/radio-module-files.txt
+          grep -q 'ARM aarch64' evidence/radio-module-files.txt
+          make O=out -s kernelrelease | tee release/kernel.release
+          cp out/arch/arm64/boot/Image release/Image
+          cp out/Module.symvers release/Module.symvers
+          cp out/System.map release/System.map
+          sha256sum release/Image release/kernel.config release/Module.symvers \
+            release/sm8475-motorola-oneli.dtb \
+            | tee evidence/build-essential-sha256.txt
+          test -s out/vmlinux.symvers
+          for symbol in devm_regulator_bulk_get pci_pwrctrl_create_devices devm_pwrseq_get; do
+            grep -Eq "[[:space:]]${symbol}[[:space:]]" out/vmlinux.symvers || {
+              echo "Missing built-in provider: ${symbol}" >&2
+              exit 1
+            }
+          done
+
+      - name: Install exact matching modules and record load contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          make O=out -j4 INSTALL_MOD_PATH="$PWD/installed" \
+            INSTALL_MOD_STRIP=1 modules_install \
+            2>&1 | tee evidence/modules-install.log
+          release_name="$(cat release/kernel.release)"
+          test -s "installed/lib/modules/${release_name}/modules.dep"
+          (cd installed && find lib/modules -type f -name '*.ko*' -print0 \
+            | LC_ALL=C sort -z | xargs -0 -r sha256sum) \
+            > evidence/module-sha256.txt
+          test -s evidence/module-sha256.txt
+          modprobe --dirname installed --set-version "$release_name" \
+            --show-depends ath11k_pci | tee evidence/ath11k-load-order.txt
+          modprobe --dirname installed --set-version "$release_name" \
+            --show-depends hci_uart | tee evidence/hci-uart-load-order.txt
+          printf '%s\n' \
+            'Built in before PCI enumeration: RPMh, QMP PCIe PHY, WCN6855 PMU/pwrseq (including shared L7E), PCI pwrctrl-pwrseq and Qualcomm PCIe root.' \
+            'When modules/firmware are accessible: load ath11k_pci with dependency metadata (MHI/QRTR, ath11k, cfg80211/mac80211); load hci_uart with Bluetooth/QCA dependencies.' \
+            'Normally use in-tree module aliases/udev and Linux request_firmware. Physical PCI and HCI identities and board data keys remain runtime diagnostics.' \
+            'No Xiaomi calibration, device MAC assumptions or proven hardware operation.' \
+            > release/radio-load-contract.txt
+          tar --use-compress-program='zstd -T0 -7' -cf release/radio-modules.tar.zst \
+            -C installed lib/modules
+
+      - name: Verify final manifest and exported artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp evidence/module-sha256.txt release/module-sha256.txt
+          printf '%s\n' "kernel_sha=$(git rev-parse HEAD)" \
+            "kernel_release=$(cat release/kernel.release)" \
+            'wireless_producer_accepted=5d191e2dd449cb226eecd7086f76fc202a6f2257' \
+            'boot_staging_accepted=5d261b415a494621c276f8a680286c66971dc57b' \
+            'validation=CI_ARM64_IMAGE_MODULES_MODPOST_ONLY; not hardware tested' \
+            > release/source-identity.txt
+          (cd release && find . -maxdepth 1 -type f ! -name SHA256SUMS -print0 \
+            | LC_ALL=C sort -z | xargs -0 sha256sum > SHA256SUMS)
+          (cd release && sha256sum -c SHA256SUMS)
+          echo ONELI_RADIO_COMBINED_ARM64_IMAGE_MODULES_MODPOST_PASS \
+            | tee evidence/result.txt
+
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: oneli-radio-combined-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            release/
+            evidence/
           retention-days: 30
           if-no-files-found: warn
