@@ -13,6 +13,12 @@ on:
 permissions:
   contents: read
 
+# A newer run supersedes only this DP workflow on the same branch/ref.
+# Other subsystem workflows, branches and distinct PR refs are unaffected.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   production-host-and-schema:
     runs-on: ubuntu-24.04
@@ -67,6 +73,8 @@ jobs:
           if-no-files-found: warn
 
   arm64-module-link:
+    # Reuse the cheap host and exact DT/schema result as the compile gate.
+    needs: production-host-and-schema
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     env:
