@@ -24,6 +24,7 @@ struct pwrseq_qcom_wcn_pdata {
 	unsigned int gpio_enable_delay_ms;
 	const struct pwrseq_target_data **targets;
 	bool has_vddio; /* separate VDD IO regulator */
+	bool optional_vddasd; /* WCN6855 board-provided shared ASD supply */
 	int (*match)(struct pwrseq_device *pwrseq, struct device *dev);
 };
 
@@ -32,6 +33,7 @@ struct pwrseq_qcom_wcn_ctx {
 	struct device_node *of_node;
 	const struct pwrseq_qcom_wcn_pdata *pdata;
 	struct regulator_bulk_data *regs;
+	size_t num_vregs;
 	struct regulator *vddio;
 	struct gpio_desc *bt_gpio;
 	struct gpio_desc *wlan_gpio;
@@ -79,14 +81,14 @@ static int pwrseq_qcom_wcn_vregs_enable(struct pwrseq_device *pwrseq)
 {
 	struct pwrseq_qcom_wcn_ctx *ctx = pwrseq_device_get_drvdata(pwrseq);
 
-	return regulator_bulk_enable(ctx->pdata->num_vregs, ctx->regs);
+	return regulator_bulk_enable(ctx->num_vregs, ctx->regs);
 }
 
 static int pwrseq_qcom_wcn_vregs_disable(struct pwrseq_device *pwrseq)
 {
 	struct pwrseq_qcom_wcn_ctx *ctx = pwrseq_device_get_drvdata(pwrseq);
 
-	return regulator_bulk_disable(ctx->pdata->num_vregs, ctx->regs);
+	return regulator_bulk_disable(ctx->num_vregs, ctx->regs);
 }
 
 static const struct pwrseq_unit_data pwrseq_qcom_wcn_vregs_unit_data = {
@@ -379,6 +381,7 @@ static const char *const pwrseq_wcn6855_vregs[] = {
 static const struct pwrseq_qcom_wcn_pdata pwrseq_wcn6855_of_data = {
 	.vregs = pwrseq_wcn6855_vregs,
 	.num_vregs = ARRAY_SIZE(pwrseq_wcn6855_vregs),
+	.optional_vddasd = true,
 	.pwup_delay_ms = 50,
 	.gpio_enable_delay_ms = 5,
 	.targets = pwrseq_qcom_wcn6855_targets,
@@ -472,7 +475,25 @@ static int pwrseq_qcom_wcn_probe(struct platform_device *pdev)
 		return dev_err_probe(dev, -ENODEV,
 				     "Failed to obtain platform data\n");
 
-	ctx->regs = devm_kcalloc(dev, ctx->pdata->num_vregs,
+	/*
+	 * vddasd is board-specific on WCN6855. Keep the other variants and
+	 * WCN6855 boards without this supply on their original regulator list.
+	 * A declared, malformed phandle is an error, not an optional dummy rail.
+	 */
+	ctx->num_vregs = ctx->pdata->num_vregs;
+	if (ctx->pdata->optional_vddasd &&
+	    of_property_present(dev->of_node, "vddasd-supply")) {
+		struct device_node *supply;
+
+		supply = of_parse_phandle(dev->of_node, "vddasd-supply", 0);
+		if (!supply)
+			return dev_err_probe(dev, -EINVAL,
+					     "Invalid vddasd supply phandle\n");
+		of_node_put(supply);
+		ctx->num_vregs++;
+	}
+
+	ctx->regs = devm_kcalloc(dev, ctx->num_vregs,
 				 sizeof(*ctx->regs), GFP_KERNEL);
 	if (!ctx->regs)
 		return -ENOMEM;
@@ -480,7 +501,10 @@ static int pwrseq_qcom_wcn_probe(struct platform_device *pdev)
 	for (i = 0; i < ctx->pdata->num_vregs; i++)
 		ctx->regs[i].supply = ctx->pdata->vregs[i];
 
-	ret = devm_regulator_bulk_get(dev, ctx->pdata->num_vregs, ctx->regs);
+	if (ctx->num_vregs > ctx->pdata->num_vregs)
+		ctx->regs[ctx->pdata->num_vregs].supply = "vddasd";
+
+	ret = devm_regulator_bulk_get(dev, ctx->num_vregs, ctx->regs);
 	if (ret < 0)
 		return dev_err_probe(dev, ret,
 				     "Failed to get all regulators\n");
