@@ -217,7 +217,7 @@ jobs:
           sha256sum out/.config release/sm8475-motorola-oneli.dtb \
             > evidence/inputs.sha256
           for x in CONFIG_POWER_SEQUENCING_QCOM_WCN=y \
-                   CONFIG_PCI_PWRCTRL_PWRSEQ=y CONFIG_PHY_QCOM_QMP_PCIE=y \
+                   CONFIG_PCI_PWRCTRL_PWRSEQ=m CONFIG_PHY_QCOM_QMP_PCIE=y \
                    CONFIG_REGULATOR_QCOM_RPMH=y CONFIG_PCIE_QCOM=y \
                    CONFIG_BT_LE=y CONFIG_ATH11K_PCI=m CONFIG_BT_HCIUART=m; do
             grep -Fx "$x" out/.config
@@ -235,6 +235,7 @@ jobs:
             | tee evidence/image-files.txt
           file out/drivers/net/wireless/ath/ath11k/ath11k_pci.ko \
                out/drivers/bluetooth/hci_uart.ko \
+               out/drivers/pci/pwrctrl/pci-pwrctrl-pwrseq.ko \
             | tee evidence/radio-module-files.txt
           grep -q 'ARM aarch64' evidence/radio-module-files.txt
           make O=out -s kernelrelease | tee release/kernel.release
@@ -266,11 +267,14 @@ jobs:
             > evidence/module-sha256.txt
           test -s evidence/module-sha256.txt
           modprobe --dirname installed --set-version "$release_name" \
+            --show-depends pci-pwrctrl-pwrseq | tee evidence/pcie-prepower-load-order.txt
+          modprobe --dirname installed --set-version "$release_name" \
             --show-depends ath11k_pci | tee evidence/ath11k-load-order.txt
           modprobe --dirname installed --set-version "$release_name" \
             --show-depends hci_uart | tee evidence/hci-uart-load-order.txt
           printf '%s\n' \
-            'Built in before PCI enumeration: RPMh, QMP PCIe PHY, WCN6855 PMU/pwrseq (including shared L7E), PCI pwrctrl-pwrseq and Qualcomm PCIe root.' \
+            'Built in: RPMh, QMP PCIe PHY, WCN6855 PMU/pwrseq (including shared L7E) and Qualcomm PCIe root.' \
+            'Early initramfs or equivalent: load pci-pwrctrl-pwrseq.ko; qcom_pcie_host_init defers on unbound PCI pre-power child. Supplying a file on disk alone does not trigger its binding without userspace autoload.' \
             'When modules/firmware are accessible: load ath11k_pci with dependency metadata (MHI/QRTR, ath11k, cfg80211/mac80211); load hci_uart with Bluetooth/QCA dependencies.' \
             'Normally use in-tree module aliases/udev and Linux request_firmware. Physical PCI and HCI identities and board data keys remain runtime diagnostics.' \
             'No Xiaomi calibration, device MAC assumptions or proven hardware operation.' \

@@ -141,7 +141,7 @@ def main():
         "CONFIG_PHY_QCOM_QMP": "y",
         "CONFIG_PHY_QCOM_QMP_PCIE": "y",
         "CONFIG_PCI_PWRCTRL_GENERIC": "y",
-        "CONFIG_PCI_PWRCTRL_PWRSEQ": "y",
+        "CONFIG_PCI_PWRCTRL_PWRSEQ": "m",
         "CONFIG_ATH11K": "m",
         "CONFIG_ATH11K_PCI": "m",
         "CONFIG_MHI_BUS": "m",
