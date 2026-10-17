@@ -49,7 +49,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             make gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
             bc bison flex libssl-dev libelf-dev python3 python3-venv \
-            python3-pip python3-dev libyaml-dev device-tree-compiler
+            python3-pip python3-dev libyaml-dev device-tree-compiler dwarves
           python3 -m venv /tmp/razr-dt-venv
           /tmp/razr-dt-venv/bin/pip install 'dtschema==2026.9'
           mkdir -p evidence
