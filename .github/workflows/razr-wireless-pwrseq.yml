@@ -100,7 +100,10 @@ jobs:
           test -s out/vmlinux && test -s out/vmlinux.symvers
           file out/vmlinux | tee evidence/vmlinux-file.txt
           grep -q 'ARM aarch64' evidence/vmlinux-file.txt
-          for symbol in regulator_bulk_enable regulator_bulk_disable devm_regulator_bulk_get of_parse_phandle gpiod_direction_output pwrseq_device_get_drvdata devm_pwrseq_device_register; do
+          # of_parse_phandle() is an inline wrapper; the exported provider is
+          # __of_parse_phandle_with_args(). All other names below are
+          # actual exported functions in this pinned kernel.
+          for symbol in regulator_bulk_enable regulator_bulk_disable devm_regulator_bulk_get __of_parse_phandle_with_args gpiod_direction_output pwrseq_device_get_drvdata devm_pwrseq_device_register; do
             grep -Eq "[[:space:]]${symbol}[[:space:]]" out/vmlinux.symvers || {
               echo "Missing actual built-in provider: ${symbol}" >&2
               exit 1
