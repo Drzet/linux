@@ -381,12 +381,14 @@
 		output-low;
 	};
 
-	/* GPIO82 is clock-switch state evidence, not a PMU output. */
+	/*
+	 * GPIO82 records clock-switch state. The TLMM binding forbids
+	 * input-enable; no output-high/low property or driver GPIO write.
+	 */
 	oneli_radio_swctrl: oneli-radio-swctrl-state {
 		pins = "gpio82";
 		function = "gpio";
 		bias-disable;
-		input-enable;
 	};
 };
 
