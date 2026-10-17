@@ -10,7 +10,13 @@ on:
       - 'Documentation/devicetree/bindings/arm/qcom.yaml'
       - 'Documentation/devicetree/bindings/pinctrl/qcom,sm8450-tlmm.yaml'
       - '.github/workflows/razr-oneli-dt.yml'
+      - '.github/workflows/razr-oneli-fdt.yml'
   workflow_dispatch:
+
+# Only cancel superseded validation for this workflow and branch/ref.
+concurrency:
+  group: oneli-dt-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -53,15 +59,6 @@ jobs:
             sha256sum project-audit/tests/scripts/check-oneli-dtb.py
           } > evidence/versions.txt 2>&1
 
-      - name: Compile exact oneli DTB
-        shell: bash
-        run: |
-          set -o pipefail
-          export ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu-
-          make O=out defconfig 2>&1 | tee evidence/configure.log
-          make O=out -j"$(nproc)" qcom/sm8475-motorola-oneli.dtb \
-            2>&1 | tee evidence/oneli-dtb.log
-
       - name: Validate board, regulator, UFS and GPU schema definitions
         shell: bash
         run: |
@@ -77,15 +74,20 @@ jobs:
             Documentation/devicetree/bindings/display/msm/gmu.yaml \
             2>&1 | tee evidence/key-bindings-doc-check.log
 
-      - name: Check exact oneli DTB against all applicable schemas
+      - name: Compile oneli DTB once and validate all applicable schemas
         shell: bash
         run: |
-          set -o pipefail
+          set -euo pipefail
           export ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu-
           export PATH="/tmp/razr-dt-venv/bin:$PATH"
-          rm -f out/arch/arm64/boot/dts/qcom/sm8475-motorola-oneli.dtb
+          make O=out defconfig 2>&1 | tee evidence/configure.log
+          # This one invocation compiles the DTB and performs CHECK_DTBS=y;
+          # the direct schema check and FDT audit below consume the same bytes.
           make O=out -j"$(nproc)" CHECK_DTBS=y qcom/sm8475-motorola-oneli.dtb \
             2>&1 | tee evidence/oneli-all-dtbs-check.log
+          test -s out/arch/arm64/boot/dts/qcom/sm8475-motorola-oneli.dtb
+          sha256sum out/arch/arm64/boot/dts/qcom/sm8475-motorola-oneli.dtb \
+            | tee evidence/compiled-oneli-dtb.sha256
 
       - name: Capture all-applicable schema diagnostics for oneli
         shell: bash
