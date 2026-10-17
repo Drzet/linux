@@ -125,16 +125,19 @@ jobs:
           # This does not build/package an Image or modify the board DTS.
           make O=out -j"$(nproc)" vmlinux 2>&1 | tee evidence/vmlinux.log
           test -s out/vmlinux
-          test -s out/Module.symvers
+          # The "vmlinux" target emits vmlinux.symvers; modules produces
+          # Module.symvers later. Verify each file at the correct stage.
+          test -s out/vmlinux.symvers
           file out/vmlinux | tee evidence/vmlinux-file.txt
           grep -q 'ARM aarch64' evidence/vmlinux-file.txt
           for symbol in regulator_enable regulator_disable typec_switch_register typec_switch_unregister typec_mux_register typec_mux_unregister gpiod_set_value_cansleep; do
-            grep -Eq "[[:space:]]${symbol}[[:space:]]" out/Module.symvers || {
+            grep -Eq "[[:space:]]${symbol}[[:space:]]" out/vmlinux.symvers || {
               echo "Missing built-in provider export: ${symbol}" >&2
               exit 1
             }
+            grep -E "[[:space:]]${symbol}[[:space:]]" out/vmlinux.symvers | tee -a evidence/built-in-provider-exports.txt
           done
-          sha256sum out/vmlinux out/Module.symvers | tee evidence/vmlinux-provider-hashes.txt
+          sha256sum out/vmlinux out/vmlinux.symvers | tee evidence/vmlinux-provider-hashes.txt
       - name: Complete ARM64 SBU module link and modpost without an Image
         shell: bash
         run: |
@@ -156,5 +159,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: gpio-sbu-arm64-link-${{ github.run_id }}
-          path: evidence/
+          path: |
+            evidence/
+            out/drivers/usb/typec/mux/gpio-sbu-mux.ko
           if-no-files-found: warn
