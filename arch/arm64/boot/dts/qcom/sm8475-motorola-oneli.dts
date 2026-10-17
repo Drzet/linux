@@ -115,7 +115,36 @@
 		qcom,pmic-id = "b";
 		status = "disabled";
 
-		oneli_l5b: ldo5 {
+		/*
+		 * B_PLUS feeds the three buck inputs physically, but is a
+		 * variable battery/power-path voltage without a modelled
+		 * Linux provider. Do not invent a fixed 3.7V supply.
+		 * The grouped LDO inputs follow the oneli rev03 schematic.
+		 */
+		vdd-l2-l7-supply = <&oneli_bobc>;
+		vdd-l3-l5-supply = <&oneli_s11b>;
+		vdd-l6-l9-l10-supply = <&oneli_s12b>;
+
+		oneli_s10b: smps10 {
+			regulator-name = "oneli-s10b-radio-io-usb-dp";
+			regulator-min-microvolt = <1800000>;
+			regulator-max-microvolt = <1800000>;
+		};
+
+		oneli_s11b: smps11 {
+			regulator-name = "oneli-s11b-radio-digital";
+			regulator-min-microvolt = <966000>;
+			regulator-max-microvolt = <1170000>;
+		};
+
+		oneli_s12b: smps12 {
+			regulator-name = "oneli-s12b-radio-rf-ufs";
+			regulator-min-microvolt = <1350000>;
+			regulator-max-microvolt = <2024000>;
+		};
+
+		oneli_l5b:
+ ldo5 {
 			regulator-name = "oneli-l5b-ufs-phy";
 			regulator-min-microvolt = <720000>;
 			regulator-max-microvolt = <958000>;
@@ -139,15 +168,59 @@
 		qcom,pmic-id = "c";
 		status = "disabled";
 
-		oneli_l10c: ldo10 {
+		/* Oneli source: PM8350C L2/L8 share the S1C input. */
+		vdd-l2-l8-supply = <&oneli_s1c>;
+
+		oneli_s1c: smps1 {
+			regulator-name = "oneli-s1c-radio-rf-dp-parent";
+			regulator-min-microvolt = <1900000>;
+			regulator-max-microvolt = <2024000>;
+		};
+
+		oneli_bobc: bob {
+			regulator-name = "oneli-bobc-variable-bplus-input";
+			/*
+			 * The physical B_PLUS input has no truthful parent
+			 * regulator in Linux at this stage. No fixed supply.
+			 */
+		};
+
+		oneli_l10c:
+ ldo10 {
 			regulator-name = "oneli-l10c-ufs-pll";
 			regulator-min-microvolt = <1200000>;
 			regulator-max-microvolt = <1304000>;
 		};
 	};
+
+	/*
+	 * [INFERRED] PMR735A PMIC E's L7 physical parent uses the SM8450
+	 * HDK BOB input topology. The installed oneli connection is not
+	 * independently traced; the entire provider stays disabled.
+	 */
+	regulators-3 {
+		compatible = "qcom,pmr735a-rpmh-regulators";
+		qcom,pmic-id = "e";
+		status = "disabled";
+
+		vdd-l7-bob-supply = <&oneli_bobc>;
+
+		oneli_s2e: smps2 {
+			regulator-name = "oneli-s2e-radio-pmu-mx";
+			regulator-min-microvolt = <1012000>;
+			regulator-max-microvolt = <1040000>;
+		};
+
+		oneli_l7e: ldo7 {
+			regulator-name = "oneli-l7e-radio-antenna-asd";
+			regulator-min-microvolt = <2800000>;
+			regulator-max-microvolt = <2800000>;
+		};
+	};
 };
 
-/* UFS is still disabled. The supply phandles are review-only. */
+/* UFS is still disabled.
+ The supply phandles are review-only. */
 &ufs_mem_hc {
 	vcc-supply = <&oneli_l7b>;
 	vccq-supply = <&oneli_l9b>;
@@ -266,4 +339,183 @@
  */
 &dispcc {
 	status = "disabled";
+};
+
+/*
+ * [INFERRED] Inherited Motorola Cape QCA6490 WLAN/BT routing, mapped to
+ * upstream WCN6855 PMU/PCI/serdev bindings. The real oneli PCI/HCI
+ * identities are unknown and must be learned through enumeration, NOT
+ * fabricated or used as a prerequisite to disabled-source staging.
+ *
+ * Every new endpoint/provider remains disabled. Neither the UART20
+ * QUP2 wrapper nor the PCIe0/PHY is enabled. There is one owner for
+ * GPIO80 WLAN_EN, GPIO81 BT_EN and GPIO204 XO, not separate per-radio
+ * GPIO consumers. SWCTRL GPIO82 has an upstream binding property but
+ * the current WCN6855 sequencer does not drive it.
+ *
+ * PMR735A L7E is a shared WLAN antenna-switch / BT ASD 2.8V source.
+ * vddasd is intentionally present to name the one shared consumer:
+ * it needs the separately reviewed Wireless WCN6855 property-present
+ * driver before this entire radio tree could be enabled.
+ */
+&tlmm {
+	oneli_radio_wlan_en: oneli-radio-wlan-en-state {
+		pins = "gpio80";
+		function = "gpio";
+		drive-strength = <16>;
+		bias-pull-down;
+		output-low;
+	};
+
+	oneli_radio_bt_en: oneli-radio-bt-en-state {
+		pins = "gpio81";
+		function = "gpio";
+		drive-strength = <16>;
+		bias-pull-down;
+		output-low;
+	};
+
+	oneli_radio_xo: oneli-radio-xo-state {
+		pins = "gpio204";
+		function = "gpio";
+		drive-strength = <16>;
+		bias-pull-down;
+		output-low;
+	};
+
+	/* GPIO82 is clock-switch state evidence, not a PMU output. */
+	oneli_radio_swctrl: oneli-radio-swctrl-state {
+		pins = "gpio82";
+		function = "gpio";
+		bias-disable;
+		input-enable;
+	};
+};
+
+/ {
+	oneli_wcn6855: wcn6855-pmu {
+		compatible = "qcom,wcn6855-pmu";
+		status = "disabled";
+
+		pinctrl-names = "default";
+		pinctrl-0 = <&oneli_radio_wlan_en>, <&oneli_radio_bt_en>,
+			    <&oneli_radio_xo>, <&oneli_radio_swctrl>;
+		wlan-enable-gpios = <&tlmm 80 GPIO_ACTIVE_HIGH>;
+		bt-enable-gpios = <&tlmm 81 GPIO_ACTIVE_HIGH>;
+		/* The binding permits SWCTRL82; upstream treats it as state. */
+		swctrl-gpios = <&tlmm 82 GPIO_ACTIVE_HIGH>;
+		xo-clk-gpios = <&tlmm 204 GPIO_ACTIVE_HIGH>;
+
+		vddio-supply = <&oneli_s10b>;
+		vddaon-supply = <&oneli_s11b>;
+		vddpmu-supply = <&oneli_s12b>;
+		vddpmumx-supply = <&oneli_s2e>;
+		vddpmucx-supply = <&oneli_s11b>;
+		vddrfa0p95-supply = <&oneli_s11b>;
+		vddrfa1p3-supply = <&oneli_s12b>;
+		vddrfa1p9-supply = <&oneli_s1c>;
+		vddpcie1p3-supply = <&oneli_s12b>;
+		vddpcie1p9-supply = <&oneli_s1c>;
+		vddasd-supply = <&oneli_l7e>;
+
+		regulators {
+			oneli_pmu_rfa_cmn: ldo0 {
+				regulator-name = "oneli-pmu-rfa-cmn";
+			};
+
+			oneli_pmu_aon: ldo1 {
+				regulator-name = "oneli-pmu-aon";
+			};
+
+			oneli_pmu_wlcx: ldo2 {
+				regulator-name = "oneli-pmu-wlcx";
+			};
+
+			oneli_pmu_wlmx: ldo3 {
+				regulator-name = "oneli-pmu-wlmx";
+			};
+
+			oneli_pmu_btcmx: ldo4 {
+				regulator-name = "oneli-pmu-btcmx";
+			};
+
+			oneli_pmu_pcie_1p8: ldo5 {
+				regulator-name = "oneli-pmu-pcie-1p8";
+			};
+
+			oneli_pmu_pcie_0p9: ldo6 {
+				regulator-name = "oneli-pmu-pcie-0p9";
+			};
+
+			oneli_pmu_rfa_0p8: ldo7 {
+				regulator-name = "oneli-pmu-rfa-0p8";
+			};
+
+			oneli_pmu_rfa_1p2: ldo8 {
+				regulator-name = "oneli-pmu-rfa-1p2";
+			};
+
+			oneli_pmu_rfa_1p7: ldo9 {
+				regulator-name = "oneli-pmu-rfa-1p7";
+			};
+		};
+	};
+};
+
+/* The upstream SoC already owns PCIe0 PERST94, CLKREQ95, WAKE96. */
+&pcie0 {
+	max-link-speed = <2>;
+	status = "disabled";
+};
+
+/*
+ * Motorola RC0's two PHY regulator votes are PM8350 L5B (~0.88V)
+ * and PM8350C L10C (~1.2V); unlike the HDK's L6B comparator.
+ */
+&pcie0_phy {
+	vdda-phy-supply = <&oneli_l5b>;
+	vdda-pll-supply = <&oneli_l10c>;
+	status = "disabled";
+};
+
+&pcieport0 {
+	oneli_wifi: wifi@0 {
+		/* Expected generic match, not a measured oneli endpoint ID. */
+		compatible = "pci17cb,1103";
+		reg = <0x10000 0x0 0x0 0x0 0x0>;
+		status = "disabled";
+
+		vddrfacmn-supply = <&oneli_pmu_rfa_cmn>;
+		vddaon-supply = <&oneli_pmu_aon>;
+		vddwlcx-supply = <&oneli_pmu_wlcx>;
+		vddwlmx-supply = <&oneli_pmu_wlmx>;
+		vddpcie1p8-supply = <&oneli_pmu_pcie_1p8>;
+		vddpcie0p9-supply = <&oneli_pmu_pcie_0p9>;
+		vddrfa0p8-supply = <&oneli_pmu_rfa_0p8>;
+		vddrfa1p2-supply = <&oneli_pmu_rfa_1p2>;
+		vddrfa1p8-supply = <&oneli_pmu_rfa_1p7>;
+	};
+};
+
+/*
+ * QUP2 wrapper remains disabled; UART20 uses the inherited
+ * qup_uart20_default TLMM76/77/78/79 hardware mux and GENI S5.
+ * UART7 / serial0 remains the only enabled diagnostic serial.
+ */
+&uart20 {
+	status = "disabled";
+
+	oneli_bluetooth: bluetooth {
+		compatible = "qcom,wcn6855-bt";
+		status = "disabled";
+
+		vddrfacmn-supply = <&oneli_pmu_rfa_cmn>;
+		vddaon-supply = <&oneli_pmu_aon>;
+		vddwlcx-supply = <&oneli_pmu_wlcx>;
+		vddwlmx-supply = <&oneli_pmu_wlmx>;
+		vddbtcmx-supply = <&oneli_pmu_btcmx>;
+		vddrfa0p8-supply = <&oneli_pmu_rfa_0p8>;
+		vddrfa1p2-supply = <&oneli_pmu_rfa_1p2>;
+		vddrfa1p7-supply = <&oneli_pmu_rfa_1p7>;
+	};
 };
