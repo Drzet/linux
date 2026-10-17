@@ -110,6 +110,11 @@ def main():
                                 capture_output=True, text=True)
         check(forced.returncode != 0, "WLAN_EN level forced by pinctrl")
     check(get(gpio80, "pins", "s") == "gpio80", "WLAN_EN TLMM state")
+    # RPMh uses for_each_available_child_of_node: do not register or
+    # apply constraints to two UFS-only outputs merely by enabling PM8350.
+    for unused in [rsc + "/regulators-0/ldo7", rsc + "/regulators-0/ldo9"]:
+        check(get(unused, "status", "s") == "disabled",
+              unused + " unrelated UFS-only regulator activated")
     # Guard existing nonradio bring-up boundaries; this is not blanket enablement.
     for inactive in [soc + "/usb@a6f8800", soc + "/geniqup@9c0000/i2c@994000",
                      soc + "/phy@88e000"]:

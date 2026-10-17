@@ -155,12 +155,17 @@
 			regulator-name = "oneli-l7b-ufs-vcc";
 			regulator-min-microvolt = <2400000>;
 			regulator-max-microvolt = <3544000>;
+			/* Not needed by radio. Prevent registering and voting on
+			 * this UFS-only rail when the common provider starts. */
+			status = "disabled";
 		};
 
 		oneli_l9b: ldo9 {
 			regulator-name = "oneli-l9b-ufs-vccq";
 			regulator-min-microvolt = <1200000>;
 			regulator-max-microvolt = <1304000>;
+			/* UFS host is disabled. Leave this unrelated output unregistered. */
+			status = "disabled";
 		};
 	};
 
