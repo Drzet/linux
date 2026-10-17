@@ -1,0 +1,136 @@
+name: Razr WCN6855 optional ASD supply
+
+on:
+  push:
+    branches: [razr/wireless]
+    paths:
+      - 'drivers/power/sequencing/pwrseq-qcom-wcn.c'
+      - 'scripts/razr/test-wcn6855-vddasd.py'
+      - '.github/workflows/razr-wireless-pwrseq.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  cheap-production-host:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Run production-source probe and common-bulk harness
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p evidence
+          git rev-parse HEAD | tee evidence/kernel-sha.txt
+          cc --version | head -1 | tee evidence/host-cc.txt
+          python3 --version | tee evidence/python.txt
+          python3 scripts/razr/test-wcn6855-vddasd.py . 2>&1 | tee evidence/host-test.log
+          grep -q 'WCN6855_PRODUCTION_HOST_PASS' evidence/host-test.log
+      - name: Confirm retained binding supports optional WCN6855 supply
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' | tee evidence/binding-review.log
+          from pathlib import Path
+          schema = Path('Documentation/devicetree/bindings/regulator/qcom,qca6390-pmu.yaml').read_text()
+          assert '  vddasd-supply:' in schema, "existing property disappeared"
+          wcn = schema.split('const: qcom,wcn6855-pmu', 1)[1]
+          req = wcn.split('required:', 1)[1].split('  - if:', 1)[0]
+          assert 'vddasd-supply' not in req, 'WCN6855 optional property became mandatory'
+          print('WCN6855_OPTIONAL_ASD_BINDING_PASS (unchanged schema)')
+          PY
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: wireless-host-${{ github.run_id }}
+          path: evidence/
+          if-no-files-found: warn
+
+  arm64-module-link:
+    needs: cheap-production-host
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      ARCH: arm64
+      CROSS_COMPILE: aarch64-linux-gnu-
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Install cross compiler and kernel dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
+            make bc bison flex libssl-dev libelf-dev libncurses-dev \
+            dwarves kmod
+      - name: Resolve exact module configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p evidence
+          git rev-parse HEAD | tee evidence/kernel-sha.txt
+          aarch64-linux-gnu-gcc --version | head -1 | tee evidence/cross-cc.txt
+          aarch64-linux-gnu-ld --version | head -1 | tee evidence/cross-ld.txt
+          make --version | head -1 | tee evidence/make.txt
+          make O=out defconfig 2>&1 | tee evidence/config.log
+          scripts/config --file out/.config -e MODULES -e REGULATOR \
+            -e GPIOLIB -e OF -m POWER_SEQUENCING -m POWER_SEQUENCING_QCOM_WCN
+          make O=out olddefconfig 2>&1 | tee -a evidence/config.log
+          grep -Fx 'CONFIG_POWER_SEQUENCING=m' out/.config
+          grep -Fx 'CONFIG_POWER_SEQUENCING_QCOM_WCN=m' out/.config
+          grep -Fx 'CONFIG_REGULATOR=y' out/.config
+          cp out/.config evidence/resolved.config
+          sha256sum out/.config | tee evidence/config-sha256.txt
+      - name: Generate real matching vmlinux exports
+        shell: bash
+        run: |
+          set -euo pipefail
+          make O=out -j4 vmlinux 2>&1 | tee evidence/vmlinux.log
+          test -s out/vmlinux && test -s out/vmlinux.symvers
+          file out/vmlinux | tee evidence/vmlinux-file.txt
+          grep -q 'ARM aarch64' evidence/vmlinux-file.txt
+          for symbol in regulator_bulk_enable regulator_bulk_disable devm_regulator_bulk_get of_parse_phandle gpiod_direction_output; do
+            grep -Eq "[[:space:]]${symbol}[[:space:]]" out/vmlinux.symvers || {
+              echo "Missing actual built-in provider: ${symbol}" >&2
+              exit 1
+            }
+          done
+      - name: Dependency-complete in-tree ARM64 module link
+        shell: bash
+        run: |
+          set -euo pipefail
+          make O=out -j4 M=drivers/power/sequencing modules 2>&1 | tee evidence/modules.log
+          for module in pwrseq-core pwrseq-qcom-wcn; do
+            test -s "out/drivers/power/sequencing/${module}.ko"
+            file "out/drivers/power/sequencing/${module}.ko" | tee -a evidence/module-files.txt
+            test "$(modinfo -F vermagic "out/drivers/power/sequencing/${module}.ko" | cut -d' ' -f1)" = "$(make O=out -s kernelrelease)"
+            sha256sum "out/drivers/power/sequencing/${module}.ko" | tee -a evidence/module-hashes.txt
+            aarch64-linux-gnu-nm -u "out/drivers/power/sequencing/${module}.ko" >> evidence/undefined-symbols.txt
+          done
+          grep -q 'ARM aarch64' evidence/module-files.txt
+          modinfo -F depends out/drivers/power/sequencing/pwrseq-qcom-wcn.ko | tee evidence/depends.txt
+          grep -q 'pwrseq-core' evidence/depends.txt
+          test -s out/Module.symvers
+          sha256sum out/Module.symvers out/.config | tee evidence/final-hashes.txt
+          grep -Fx "$(head -n1 evidence/config-sha256.txt)" evidence/final-hashes.txt
+          printf 'WCN6855_ARM64_MODPOST_PASS\n' | tee evidence/result.txt
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: wireless-arm64-${{ github.run_id }}
+          path: |
+            evidence/
+            out/drivers/power/sequencing/pwrseq-qcom-wcn.ko
+            out/drivers/power/sequencing/pwrseq-core.ko
+          if-no-files-found: warn
