@@ -245,10 +245,13 @@ jobs:
           sha256sum release/Image release/kernel.config release/Module.symvers \
             release/sm8475-motorola-oneli.dtb \
             | tee evidence/build-essential-sha256.txt
-          test -s out/vmlinux.symvers
+          # A normal Image/modules build produces Module.symvers, not
+          # vmlinux.symvers. Assert that each symbol is a built-in GPL export.
           for symbol in devm_regulator_bulk_get pci_pwrctrl_create_devices devm_pwrseq_get; do
-            grep -Eq "[[:space:]]${symbol}[[:space:]]" out/vmlinux.symvers || {
-              echo "Missing built-in provider: ${symbol}" >&2
+            awk -F '\t' -v symbol="$symbol" \
+              '$2 == symbol && $3 == "vmlinux" && $4 == "EXPORT_SYMBOL_GPL" { found=1 } END { exit !found }' \
+              out/Module.symvers || {
+              echo "Missing built-in GPL provider in Module.symvers: ${symbol}" >&2
               exit 1
             }
           done
