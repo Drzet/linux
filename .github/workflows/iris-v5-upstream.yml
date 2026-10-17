@@ -10,7 +10,14 @@ on:
       - 'Documentation/devicetree/bindings/media/qcom,sm8475-iris.yaml'
       - 'Documentation/devicetree/bindings/media/qcom,sc7180-venus.yaml'
       - 'tools/testing/iris-upstream/**'
+      - 'tests/vpu_iris_cb_lifecycle.py'
+      - 'tests/vpu_iommu_ranges.py'
+      - 'tests/vpu_iris_probe_unwind.py'
       - '.github/workflows/iris-v5-upstream.yml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -18,25 +25,39 @@ permissions:
 jobs:
   source_changes:
     runs-on: ubuntu-24.04
+    timeout-minutes: 5
     outputs:
       driver_changed: ${{ steps.detect.outputs.driver_changed }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
-          fetch-depth: 2
+          persist-credentials: false
       - id: detect
         shell: bash
+        env:
+          BEFORE: ${{ github.event.before }}
         run: |
           set -euo pipefail
-          if git diff --name-only HEAD^ HEAD | grep -Eq '^drivers/(iommu/of_iommu\.c|media/platform/qcom/iris/)'; then
+          # Compare the entire push, including earlier commits in a batched push.
+          if [[ "$BEFORE" == 0000000000000000000000000000000000000000 ]]; then
+            BEFORE=$(git hash-object -t tree /dev/null)
+          else
+            git fetch --no-tags --depth=1 origin "$BEFORE"
+          fi
+          git diff --name-only "$BEFORE" "$GITHUB_SHA" -- \
+            drivers/iommu/of_iommu.c drivers/media/platform/qcom/iris/ > changed-driver-files.txt
+          if [[ -s changed-driver-files.txt ]]; then
             echo 'driver_changed=true' >> "$GITHUB_OUTPUT"
           else
             echo 'driver_changed=false' >> "$GITHUB_OUTPUT"
           fi
   host:
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
       - name: Tools and exact merged dt-schema dependency
         shell: bash
         run: |
@@ -56,22 +77,42 @@ jobs:
           git rev-parse HEAD | tee evidence/kernel-commit.txt
           dt-validate --version | tee evidence/dt-schema.txt
           gcc --version > evidence/compiler.txt
+          python3 --version > evidence/python.txt
+          /tmp/iris-v5-schema/bin/pip freeze > evidence/python-dependencies.txt
           dtc --version > evidence/dtc.txt
           python3 tools/testing/iris-upstream/schema-test.py evidence 2>&1 | tee evidence/schema-test.log
           python3 tools/testing/iris-upstream/routing-test.py evidence 2>&1 | tee evidence/routing-test.log
           sha256sum evidence/valid.dtb evidence/routing-harness > evidence/SHA256SUMS
-      - uses: actions/upload-artifact@v4
+      - name: Production child registration, IOVA reservation and probe unwind
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Replaces vpu-closure-lifecycle.yml; retain all three distinct suites.
+          for test in vpu_iris_cb_lifecycle vpu_iommu_ranges vpu_iris_probe_unwind; do
+            python3 "tests/$test.py" 2>&1 | tee "evidence/$test.log"
+          done
+          sha256sum tests/vpu_iris_cb_lifecycle.py tests/vpu_iommu_ranges.py \
+            tests/vpu_iris_probe_unwind.py tools/testing/iris-upstream/* \
+            drivers/iommu/of_iommu.c drivers/media/platform/qcom/iris/* \
+            Documentation/devicetree/bindings/media/qcom,venus-common.yaml \
+            Documentation/devicetree/bindings/media/qcom,sm8475-iris.yaml \
+            Documentation/devicetree/bindings/media/qcom,sc7180-venus.yaml > evidence/source-SHA256SUMS
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
         with:
           name: iris-v5-host-schema-routing
           path: evidence
+          retention-days: 30
 
   arm64:
-    needs: source_changes
+    needs: [source_changes, host]
     if: needs.source_changes.outputs.driver_changed == 'true'
     runs-on: ubuntu-24.04
+    timeout-minutes: 120
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
       - name: Cross-compiler
         run: |
           sudo apt-get update -qq
@@ -91,8 +132,9 @@ jobs:
           file out/arch/arm64/boot/Image out/drivers/media/platform/qcom/iris/qcom-iris.ko | tee evidence/files.txt
           sha256sum out/arch/arm64/boot/Image out/Module.symvers out/drivers/media/platform/qcom/iris/qcom-iris.ko > evidence/SHA256SUMS
           cp out/.config evidence/config
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
         with:
           name: iris-v5-arm64-build-evidence
           path: evidence
+          retention-days: 30
