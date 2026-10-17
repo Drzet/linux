@@ -1,0 +1,59 @@
+name: Isolated simplefb earlycon ARM64 object and host predicates
+on:
+  push:
+    branches: ['razr/display-earlycon']
+    paths:
+      - 'drivers/tty/serial/earlycon-simplefb.c'
+      - 'drivers/tty/serial/earlycon-simplefb-check.h'
+      - 'drivers/tty/serial/Kconfig'
+      - 'drivers/tty/serial/Makefile'
+      - 'tools/testing/selftests/simplefb-earlycon/**'
+      - '.github/workflows/display-earlycon-object.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  focused:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Execute production predicate host tests before toolchain work
+        run: |
+          set -euo pipefail
+          gcc -std=gnu11 -O2 -Wall -Wextra -Werror \
+            tools/testing/selftests/simplefb-earlycon/geometry-test.c -o /tmp/simplefb-geometry-test
+          /tmp/simplefb-geometry-test
+      - name: Install target object build requirements
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends gcc-aarch64-linux-gnu bc bison flex libssl-dev libelf-dev
+      - name: Validate default-off, enable isolated option, compile ONLY ARM64 object
+        run: |
+          set -euo pipefail
+          export ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu-
+          make O=out defconfig
+          if grep -q '^CONFIG_SERIAL_EARLYCON_SIMPLEFB=y' out/.config; then exit 1; fi
+          scripts/config --file out/.config -e SERIAL_EARLYCON_SIMPLEFB
+          make O=out olddefconfig
+          grep -qx 'CONFIG_SERIAL_EARLYCON_SIMPLEFB=y' out/.config
+          grep -qx 'CONFIG_ARCH_USE_MEMREMAP_PROT=y' out/.config
+          make O=out -j2 prepare scripts
+          make O=out -j2 drivers/tty/serial/earlycon-simplefb.o
+          test -s out/drivers/tty/serial/earlycon-simplefb.o
+          file out/drivers/tty/serial/earlycon-simplefb.o | tee object-result.txt
+          aarch64-linux-gnu-readelf -h out/drivers/tty/serial/earlycon-simplefb.o | grep 'Machine:.*AArch64'
+          sha256sum out/drivers/tty/serial/earlycon-simplefb.o | tee object-sha256.txt
+      - name: Archive precise object/config evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: simplefb-earlycon-object-${{ github.run_id }}
+          path: |
+            out/.config
+            object-result.txt
+            object-sha256.txt
+          if-no-files-found: warn
+          retention-days: 30

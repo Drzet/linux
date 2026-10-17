@@ -73,6 +73,26 @@ config SERIAL_AMBA_PL011_CONSOLE
 	  your boot loader (lilo or loadlin) about how to pass options to the
 	  kernel at boot time.)
 
+config SERIAL_EARLYCON_SIMPLEFB
+	bool "DT simple-framebuffer early diagnostic console"
+	depends on ARM64 && OF_EARLY_FLATTREE
+	select ARCH_USE_MEMREMAP_PROT
+	select FONT_SUPPORT
+	select FONT_8x16
+	select SERIAL_CORE
+	select SERIAL_CORE_CONSOLE
+	select SERIAL_EARLYCON
+	help
+	  Optional bootloader framebuffer diagnostic console. This code only
+	  writes to an existing scanout buffer supplied by the flat device tree
+	  under /chosen; it does not start panel hardware or reserve RAM.
+	  It is disabled by default and has no oneli display node or bootargs.
+
+	  A deliberately verified experimental boot can use earlycon=simplefb.
+	  keep_bootcon is required to retain output into driver initcalls.
+	  Only one early console is selected; do not assume a second earlycon
+	  argument also preserves the UART boot console.
+
 config SERIAL_EARLYCON_SEMIHOST
 	bool "Early console using Arm compatible semihosting"
 	depends on ARM64 || ARM || RISCV
