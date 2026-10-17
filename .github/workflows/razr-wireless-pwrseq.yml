@@ -85,9 +85,9 @@ jobs:
           make --version | head -1 | tee evidence/make.txt
           make O=out defconfig 2>&1 | tee evidence/config.log
           scripts/config --file out/.config -e MODULES -e REGULATOR \
-            -e GPIOLIB -e OF -m POWER_SEQUENCING -m POWER_SEQUENCING_QCOM_WCN
+            -e GPIOLIB -e OF -e POWER_SEQUENCING -m POWER_SEQUENCING_QCOM_WCN
           make O=out olddefconfig 2>&1 | tee -a evidence/config.log
-          grep -Fx 'CONFIG_POWER_SEQUENCING=m' out/.config
+          grep -Fx 'CONFIG_POWER_SEQUENCING=y' out/.config
           grep -Fx 'CONFIG_POWER_SEQUENCING_QCOM_WCN=m' out/.config
           grep -Fx 'CONFIG_REGULATOR=y' out/.config
           cp out/.config evidence/resolved.config
@@ -100,7 +100,7 @@ jobs:
           test -s out/vmlinux && test -s out/vmlinux.symvers
           file out/vmlinux | tee evidence/vmlinux-file.txt
           grep -q 'ARM aarch64' evidence/vmlinux-file.txt
-          for symbol in regulator_bulk_enable regulator_bulk_disable devm_regulator_bulk_get of_parse_phandle gpiod_direction_output; do
+          for symbol in regulator_bulk_enable regulator_bulk_disable devm_regulator_bulk_get of_parse_phandle gpiod_direction_output pwrseq_device_get_drvdata devm_pwrseq_device_register; do
             grep -Eq "[[:space:]]${symbol}[[:space:]]" out/vmlinux.symvers || {
               echo "Missing actual built-in provider: ${symbol}" >&2
               exit 1
@@ -110,8 +110,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          make O=out -j4 M=drivers/power/sequencing modules 2>&1 | tee evidence/modules.log
-          for module in pwrseq-core pwrseq-qcom-wcn; do
+          make O=out -j4 modules 2>&1 | tee evidence/modules.log
+          for module in pwrseq-qcom-wcn; do
             test -s "out/drivers/power/sequencing/${module}.ko"
             file "out/drivers/power/sequencing/${module}.ko" | tee -a evidence/module-files.txt
             test "$(modinfo -F vermagic "out/drivers/power/sequencing/${module}.ko" | cut -d' ' -f1)" = "$(make O=out -s kernelrelease)"
@@ -120,7 +120,7 @@ jobs:
           done
           grep -q 'ARM aarch64' evidence/module-files.txt
           modinfo -F depends out/drivers/power/sequencing/pwrseq-qcom-wcn.ko | tee evidence/depends.txt
-          grep -q 'pwrseq-core' evidence/depends.txt
+          # Core is intentionally built into vmlinux; its exports were checked above.
           test -s out/Module.symvers
           sha256sum out/Module.symvers out/.config | tee evidence/final-hashes.txt
           grep -Fx "$(head -n1 evidence/config-sha256.txt)" evidence/final-hashes.txt
@@ -132,5 +132,5 @@ jobs:
           path: |
             evidence/
             out/drivers/power/sequencing/pwrseq-qcom-wcn.ko
-            out/drivers/power/sequencing/pwrseq-core.ko
+            out/vmlinux.symvers
           if-no-files-found: warn
