@@ -82,7 +82,8 @@ jobs:
           dtc --version > evidence/dtc.txt
           python3 tools/testing/iris-upstream/schema-test.py evidence 2>&1 | tee evidence/schema-test.log
           python3 tools/testing/iris-upstream/routing-test.py evidence 2>&1 | tee evidence/routing-test.log
-          sha256sum evidence/valid.dtb evidence/routing-harness > evidence/SHA256SUMS
+          python3 tools/testing/iris-upstream/resume-test.py evidence 2>&1 | tee evidence/resume-test.log
+          sha256sum evidence/valid.dtb evidence/routing-harness evidence/resume-harness > evidence/SHA256SUMS
       - name: Production child registration, IOVA reservation and probe unwind
         shell: bash
         run: |

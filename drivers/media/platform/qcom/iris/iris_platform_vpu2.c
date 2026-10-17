@@ -39,6 +39,8 @@ static const struct iris_firmware_desc iris_milos_desc = {
 static const struct iris_firmware_desc iris_sm8475_gen2_desc = {
 	.firmware_data = &iris_hfi_gen2_data,
 	.get_vpu_buffer_size = iris_vpu_buf_size,
+	/* [INFERRED] Legacy RESUME ABI for the oneli 2.4 development profile. */
+	.resume_without_payload = true,
 };
 
 static const struct iris_firmware_desc iris_vpu20_p1_gen1_desc = {
