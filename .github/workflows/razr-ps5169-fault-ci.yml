@@ -1,0 +1,179 @@
+name: Razr PS5169 fault handling ARM64 module validation
+
+on:
+  push:
+    branches: [razr/usb-ps5169]
+    paths:
+      - 'drivers/usb/typec/mux/ps5169.c'
+      - 'drivers/usb/typec/mux/Kconfig'
+      - 'drivers/usb/typec/mux/Makefile'
+      - 'include/linux/usb/typec*.h'
+      - 'include/linux/regulator/consumer.h'
+      - 'include/linux/gpio/consumer.h'
+      - 'include/linux/regmap.h'
+      - 'include/drm/bridge/aux-bridge.h'
+      - 'arch/arm64/configs/defconfig'
+      - 'Documentation/devicetree/bindings/usb/parade,ps5169.yaml'
+      - 'tests/usb/ps5169/oneli-valid.dts'
+      - 'scripts/razr/ps5169-fault-injection.py'
+      - 'scripts/razr/ps5169-probe-fault-injection.py'
+      - 'scripts/razr/ps5169-conditional-validation.py'
+      - '.github/workflows/razr-ps5169-fault-ci.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    outputs:
+      build: ${{ steps.changes.outputs.build }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 2
+      - name: Select compilation from the actual push range
+        id: changes
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import fnmatch
+          import os
+          import re
+          import subprocess
+
+          # Actions push commit objects omit path lists. Use the before/head
+          # trees, including multi-commit pushes, instead of event.commits text.
+          build = True
+          before = os.environ.get('BEFORE_SHA', '')
+          if os.environ['EVENT_NAME'] == 'push' and re.fullmatch(r'[0-9a-f]{40}', before) and int(before, 16):
+              try:
+                  available = subprocess.run(['git', 'cat-file', '-e', before + '^{commit}'],
+                                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                  if available.returncode:
+                      subprocess.run(['git', 'fetch', '--no-tags', '--depth=1', 'origin', before],
+                                     check=True, timeout=90)
+                  changed = subprocess.check_output(
+                      ['git', 'diff', '--name-only', '--no-renames', before, os.environ['GITHUB_SHA']],
+                      text=True).splitlines()
+                  patterns = [
+                      'drivers/usb/typec/mux/ps5169.c',
+                      'drivers/usb/typec/mux/Kconfig',
+                      'drivers/usb/typec/mux/Makefile',
+                      'include/linux/usb/typec*.h',
+                      'include/linux/regulator/consumer.h',
+                      'include/linux/gpio/consumer.h',
+                      'include/linux/regmap.h',
+                      'include/drm/bridge/aux-bridge.h',
+                      'arch/arm64/configs/defconfig',
+                  ]
+                  build = any(fnmatch.fnmatchcase(path, pattern) for path in changed for pattern in patterns)
+                  print('Changed paths:', changed)
+              except (subprocess.SubprocessError, OSError) as error:
+                  print('::warning::Cannot establish push range; conservatively retain compilation:', error)
+          # Explicit dispatch, a new branch or an unavailable range retains
+          # compilation, but it still waits for the host/schema gate below.
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write('build=' + str(build).lower() + '\n')
+          print('ARM64 compilation required:', build)
+          PY
+      - name: Install cheap host and schema tools
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y build-essential bison flex device-tree-compiler python3-venv
+          python3 -m venv .ps5169-schema-venv
+          .ps5169-schema-venv/bin/pip install 'dtschema==2026.6'
+      - name: Record exact cheap-check inputs and tools
+        run: |
+          set -euo pipefail
+          mkdir -p ps5169-checks
+          git rev-parse HEAD | tee ps5169-checks/tested-source-sha.txt
+          gcc --version | head -1 > ps5169-checks/compiler.txt
+          dtc --version > ps5169-checks/dtc.txt
+          .ps5169-schema-venv/bin/pip freeze > ps5169-checks/schema-versions.txt
+          sha256sum drivers/usb/typec/mux/ps5169.c \
+            Documentation/devicetree/bindings/usb/parade,ps5169.yaml \
+            tests/usb/ps5169/oneli-valid.dts scripts/razr/ps5169-*.py \
+            > ps5169-checks/source-sha256.txt
+      - name: Validate binding document and examples
+        run: |
+          set -euo pipefail
+          PATH="$PWD/.ps5169-schema-venv/bin:$PATH" \
+            make DT_SCHEMA_FILES=Documentation/devicetree/bindings/usb/parade,ps5169.yaml dt_binding_check \
+              2>&1 | tee ps5169-checks/binding.log
+      - name: Execute transition faults, schema fixtures and production probe faults once
+        run: |
+          set -euo pipefail
+          python3 scripts/razr/ps5169-fault-injection.py \
+            2>&1 | tee ps5169-checks/transitions.log
+          # Conditional validation executes the full original probe/remove
+          # harness plus seven forbidden-property cases. Do not run it twice.
+          PATH="$PWD/.ps5169-schema-venv/bin:$PATH" \
+            .ps5169-schema-venv/bin/python scripts/razr/ps5169-conditional-validation.py \
+              2>&1 | tee ps5169-checks/schema-and-probe.log
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: ps5169-checks-${{ github.sha }}
+          path: |
+            ps5169-checks/
+            ps5169-conditional-record/
+          if-no-files-found: warn
+
+  arm64-and-binding:
+    needs: checks
+    if: needs.checks.outputs.build == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Install ARM64 compiler and build dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
+            bc bison flex libelf-dev libssl-dev libncurses-dev dwarves
+      - name: Record source and compiler
+        run: |
+          set -euo pipefail
+          mkdir -p ps5169-record
+          git rev-parse HEAD | tee ps5169-record/tested-source-sha.txt
+          aarch64-linux-gnu-gcc --version | head -1 | tee ps5169-record/compiler.txt
+          uname -a > ps5169-record/runner.txt
+      - name: Build dependency-complete ARM64 Image and modules
+        run: |
+          set -euo pipefail
+          make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- defconfig \
+            2>&1 | tee ps5169-record/defconfig.log
+          scripts/config --enable I2C --enable REGMAP_I2C --enable DRM \
+            --enable DRM_BRIDGE --enable TYPEC --module TYPEC_MUX_PS5169
+          make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- olddefconfig \
+            2>&1 | tee ps5169-record/olddefconfig.log
+          grep -qx 'CONFIG_TYPEC_MUX_PS5169=m' .config
+          cp .config ps5169-record/resolved-arm64.config
+          make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- -j4 Image modules \
+            2>&1 | tee ps5169-record/arm64-image-modules.log
+          test -s Module.symvers
+          test -s arch/arm64/boot/Image
+          test -s drivers/usb/typec/mux/ps5169.ko
+          aarch64-linux-gnu-readelf -h drivers/usb/typec/mux/ps5169.ko \
+            | tee ps5169-record/ps5169-module-elf.txt
+          sha256sum ps5169-record/resolved-arm64.config \
+            arch/arm64/boot/Image Module.symvers \
+            drivers/usb/typec/mux/ps5169.ko \
+            | tee ps5169-record/output-sha256.txt
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: ps5169-arm64-error-handling-${{ github.sha }}
+          path: ps5169-record/
+          if-no-files-found: warn

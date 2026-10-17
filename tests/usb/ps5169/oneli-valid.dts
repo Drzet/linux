@@ -1,0 +1,59 @@
+/dts-v1/;
+
+/*
+ * Standalone binding-validation fixture ONLY. The GPIO and regulator
+ * providers below are mocks, not a proposed oneli board devicetree.
+ */
+/ {
+	compatible = "test,oneli-ps5169-schema-fixture";
+	#address-cells = <1>;
+	#size-cells = <1>;
+
+	tlmm: test-gpio-provider {
+		gpio-controller;
+		#gpio-cells = <2>;
+	};
+
+	s10b: test-vcc-regulator {
+		compatible = "regulator-fixed";
+		regulator-name = "test-s10b";
+	};
+
+	l8c: test-vio-regulator {
+		compatible = "regulator-fixed";
+		regulator-name = "test-l8c";
+	};
+
+	i2c@0 {
+		compatible = "test,fixture-i2c-bus";
+		reg = <0 0x100>;
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		retimer@30 {
+			compatible = "motorola,oneli-ps5169", "parade,ps5169";
+			reg = <0x30>;
+
+			vcc-supply = <&s10b>;
+			vio-supply = <&l8c>;
+			/* Motorola GPIO19 enable is active high: flag 0. */
+			enable-gpios = <&tlmm 19 0>;
+
+			orientation-switch;
+			retimer-switch;
+
+			ports {
+				#address-cells = <1>;
+				#size-cells = <0>;
+				port@0 {
+					reg = <0>;
+					endpoint {};
+				};
+				port@1 {
+					reg = <1>;
+					endpoint {};
+				};
+			};
+		};
+	};
+};

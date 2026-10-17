@@ -1,0 +1,775 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Driver for Parade PS5169 USB Type-C linear redriver
+ * Registers and bits decoded from downstream drivers
+ *
+ * Copyright (c) 2026 Esteban Urrutia <esteuwu@proton.me>
+ */
+
+#include <drm/bridge/aux-bridge.h>
+
+#include <linux/bitops.h>
+#include <linux/byteorder/generic.h>
+#include <linux/delay.h>
+#include <linux/errno.h>
+#include <linux/gpio/consumer.h>
+#include <linux/kernel.h>
+#include <linux/module.h>
+#include <linux/mutex.h>
+#include <linux/of.h>
+#include <linux/property.h>
+#include <linux/regulator/consumer.h>
+#include <linux/slab.h>
+#include <linux/types.h>
+#include <linux/usb/typec.h>
+#include <linux/i2c.h>
+#include <linux/regmap.h>
+
+#include <linux/usb/typec_altmode.h>
+#include <linux/usb/typec_dp.h>
+#include <linux/usb/typec_mux.h>
+#include <linux/usb/typec_retimer.h>
+
+/* Useful constants */
+#define PS5169_DP_EQ_REG_COUNT		2
+#define PS5169_USB_RX_EQ_REG_COUNT	4
+#define PS5169_USB_TX_EQ_REG_COUNT	3
+
+#define PS5169_DP_EQ_LEVEL_COUNT	8
+#define PS5169_USB_RX_EQ_LEVEL_COUNT	8
+#define PS5169_USB_TX_EQ_LEVEL_COUNT	8
+
+/* PS5169 registers */
+#define PS5169_CONFIG_REG		0x40
+#define PS5169_GAIN_REG			0x5c
+#define PS5169_USB_RX1_LFPS_REG		0x8d
+#define PS5169_USB_RX2_LFPS_REG		0x90
+#define PS5169_AUX_RX_DATA_REG		0x9f
+#define PS5169_AUX_MONITORING_REG	0xa0
+#define PS5169_HPD_LEVEL_REG		0xa1
+#define PS5169_CHIP_ID_REG		0xac
+#define PS5169_CHIP_REVISION_REG	0xae
+/* Chip revision is split in two registers */
+#define PS5169_MAX_REG			(PS5169_CHIP_REVISION_REG + 1)
+
+/* PS5169 register bits */
+#define PS5169_CONFIG_REVERSE_BIT	BIT(4)
+#define PS5169_CONFIG_DP_EN_BIT		BIT(5)
+#define PS5169_CONFIG_USB3_EN_BIT	BIT(6)
+#define PS5169_CONFIG_BASE_BIT		BIT(7)
+
+#define PS5169_GAIN_DP_BIT		BIT(4)
+#define PS5169_GAIN_USB_RX_BIT		BIT(2)
+#define PS5169_GAIN_USB_TX_BIT		BIT(0)
+
+#define PS5169_USB_RX_LFPS_50_OHM_BIT	BIT(0)
+
+#define PS5169_AUX_RX_DATA_REVERSE_BIT	BIT(1)
+
+#define PS5169_AUX_MONITORING_BIT	BIT(1)
+#define PS5169_HPD_LEVEL_BIT		BIT(2)
+
+/*
+ * The oneli PS5169 init profile is selected by a board-specific compatible,
+ * not by a generic opaque register list in devicetree. Motorola's 2022
+ * downstream reference has 27 ordered (register, value, delay-us) triplets.
+ * Only fields with a decoded function are named below; remaining registers
+ * intentionally retain their numerical addresses rather than fictitious
+ * field names. No claim is made about their physical effect without a
+ * PS5169 register specification.
+ */
+#define PS5169_ONELI_PROFILE_CONTROL_9D 0x9d
+
+struct ps5169_reg_init {
+	u8 reg;
+	u8 value;
+	u16 delay_us;
+};
+
+static const struct ps5169_reg_init ps5169_oneli_init[] = {
+	{ PS5169_ONELI_PROFILE_CONTROL_9D, 0x80, 10000 },
+	{ PS5169_ONELI_PROFILE_CONTROL_9D, 0x00, 0 },
+	{ PS5169_CONFIG_REG, 0x80, 0 },
+	{ PS5169_USB_RX1_LFPS_REG, 0x01, 0 },
+	{ PS5169_USB_RX2_LFPS_REG, 0x01, 0 },
+	{ 0x51, 0x87, 0 }, /* USB RX EQ: OEM value, not generic dB preset */
+	{ 0x50, 0x20, 0 }, /* USB TX EQ */
+	{ 0x54, 0x11, 0 }, /* USB RX/TX EQ shared register */
+	{ 0x5d, 0x66, 0 }, /* USB TX EQ */
+	{ 0x52, 0x50, 0 }, /* DP EQ */
+	{ 0x55, 0x00, 0 }, /* OEM preset: field semantics unverified */
+	{ 0x56, 0x00, 0 },
+	{ 0x57, 0x00, 0 },
+	{ 0x58, 0x00, 0 },
+	{ 0x59, 0x00, 0 },
+	{ 0x5a, 0x00, 0 },
+	{ 0x5b, 0x00, 0 },
+	{ 0x5e, 0x07, 0 }, /* DP EQ */
+	{ 0x5f, 0x00, 0 },
+	{ 0x60, 0x00, 0 },
+	{ 0x61, 0x03, 0 },
+	{ 0x65, 0x40, 0 },
+	{ 0x66, 0x00, 0 },
+	{ 0x67, 0x03, 0 },
+	{ 0x75, 0x0c, 0 },
+	{ 0x77, 0x00, 0 }, /* USB RX EQ */
+	{ 0x78, 0x7c, 0 }, /* USB RX EQ */
+};
+
+static int ps5169_apply_oneli_profile(struct regmap *regmap)
+{
+	unsigned int i;
+	int ret;
+
+	for (i = 0; i < ARRAY_SIZE(ps5169_oneli_init); i++) {
+		const struct ps5169_reg_init *entry = &ps5169_oneli_init[i];
+
+		ret = regmap_write(regmap, entry->reg, entry->value);
+		if (ret)
+			return ret;
+
+		if (entry->delay_us)
+			usleep_range(entry->delay_us, entry->delay_us + 1000);
+	}
+
+	return 0;
+}
+
+/* PS5169 register values */
+#define PS5169_CHIP_ID_VAL		0x6987
+
+struct ps5169_eq_db {
+	const u32 major;
+	const u32 minor;
+};
+
+struct ps5169_eq_data {
+	const char *propname;
+	const struct ps5169_eq_db *db;
+	const unsigned int nlevels;
+};
+
+/* PS5169 EQ registers */
+static const int ps5169_dp_eq_reg[PS5169_DP_EQ_REG_COUNT]		= {0x52, 0x5e};
+static const int ps5169_usb_rx_eq_reg[PS5169_USB_RX_EQ_REG_COUNT]	= {0x51, 0x77, 0x54, 0x78};
+static const int ps5169_usb_tx_eq_reg[PS5169_USB_TX_EQ_REG_COUNT]	= {0x50, 0x5d, 0x54};
+
+/* PS5169 EQ register masks */
+static const int ps5169_dp_eq_mask[PS5169_DP_EQ_REG_COUNT]		= {0x70, 0x07};
+static const int ps5169_usb_rx_eq_mask[PS5169_USB_RX_EQ_REG_COUNT]	= {0xf6, 0xf0, 0x0f, 0xe1};
+static const int ps5169_usb_tx_eq_mask[PS5169_USB_TX_EQ_REG_COUNT]	= {0x70, 0x70, 0xf0};
+
+/* PS5169 EQ register values */
+static const int ps5169_dp_eq_val[PS5169_DP_EQ_LEVEL_COUNT][PS5169_DP_EQ_REG_COUNT] = {
+	{0x00, 0x04},
+	{0x10, 0x05},
+	{0x20, 0x06},
+	{0x30, 0x06},
+	{0x40, 0x06},
+	{0x50, 0x07},
+	{0x60, 0x07},
+	{0x70, 0x07},
+};
+
+static const int ps5169_usb_rx_eq_val[PS5169_USB_RX_EQ_LEVEL_COUNT][PS5169_USB_RX_EQ_REG_COUNT] = {
+	{0x86, 0x00, 0x00, 0x20},
+	{0x96, 0x00, 0x01, 0x20},
+	{0xa6, 0x50, 0x01, 0x40},
+	{0xb6, 0x50, 0x05, 0x40},
+	{0xc6, 0xb0, 0x0c, 0x80},
+	{0xd6, 0xf0, 0x05, 0x80},
+	{0xe6, 0xf0, 0x0f, 0x80},
+	{0xf6, 0x30, 0x0f, 0xa1},
+};
+
+static const int ps5169_usb_tx_eq_val[PS5169_USB_TX_EQ_LEVEL_COUNT][PS5169_USB_TX_EQ_REG_COUNT] = {
+	{0x00, 0x40, 0x00},
+	{0x10, 0x50, 0x10},
+	{0x20, 0x60, 0x10},
+	{0x30, 0x60, 0x50},
+	{0x40, 0x60, 0xc0},
+	{0x50, 0x70, 0x50},
+	{0x60, 0x70, 0xf0},
+	{0x70, 0x70, 0xf0},
+};
+
+/* PS5169 EQ decibels */
+static const struct ps5169_eq_db ps5169_dp_eq_db[PS5169_DP_EQ_LEVEL_COUNT] = {
+	{2,  0},
+	{5,  5},
+	{6,  5},
+	{7,  5},
+	{8,  0},
+	{8,  5},
+	{9,  5},
+	{10, 0}, /* Supposedly */
+};
+
+static const struct ps5169_eq_db ps5169_usb_rx_eq_db[PS5169_USB_RX_EQ_LEVEL_COUNT] = {
+	{5,  2},
+	{6,  0},
+	{7,  0},
+	{8,  0},
+	{8,  8},
+	{9,  6},
+	{10, 4},
+	{11, 2},
+};
+
+static const struct ps5169_eq_db ps5169_usb_tx_eq_db[PS5169_USB_TX_EQ_LEVEL_COUNT] = {
+	{2,  0},
+	{5,  5},
+	{6,  5},
+	{7,  5},
+	{8,  0},
+	{8,  5},
+	{9,  5},
+	{10, 0}, /* Supposedly */
+};
+
+/* PS5169 EQ data */
+static const struct ps5169_eq_data ps5169_dp_eq_data = {
+	.propname = "parade,dp-eq-db",
+	.db = ps5169_dp_eq_db,
+	.nlevels = PS5169_DP_EQ_LEVEL_COUNT,
+};
+
+static const struct ps5169_eq_data ps5169_usb_rx_eq_data = {
+	.propname = "parade,usb-rx-eq-db",
+	.db = ps5169_usb_rx_eq_db,
+	.nlevels = PS5169_USB_RX_EQ_LEVEL_COUNT,
+};
+
+static const struct ps5169_eq_data ps5169_usb_tx_eq_data = {
+	.propname = "parade,usb-tx-eq-db",
+	.db = ps5169_usb_tx_eq_db,
+	.nlevels = PS5169_USB_TX_EQ_LEVEL_COUNT,
+};
+
+struct redriver {
+	struct regulator_bulk_data supplies[2];
+	struct gpio_desc *reset_gpio;
+	struct gpio_desc *enable_gpio;
+
+	struct regmap *regmap;
+
+	struct typec_switch *typec_switch;
+	struct typec_mux *typec_mux;
+
+	struct typec_switch_dev *sw;
+	struct typec_retimer *retimer;
+
+	unsigned long mode;
+	enum typec_orientation orientation;
+
+	unsigned int dp_eq_level;
+	unsigned int usb_rx_eq_level;
+	unsigned int usb_tx_eq_level;
+
+	bool tune_lfps;
+
+	bool dp_set_gain;
+	bool usb_rx_set_gain;
+	bool usb_tx_set_gain;
+
+	struct mutex lock; /* protect non-concurrent retimer & switch */
+
+	unsigned int svid;
+	bool hw_valid;
+	bool oneli_profile;
+};
+
+static const struct regmap_config ps5169_regmap = {
+	.max_register = PS5169_MAX_REG,
+	.reg_bits = 8,
+	.val_bits = 8,
+	/* Accesses only done under ps5169->lock */
+	.disable_locking = true,
+};
+
+static int ps5169_write(struct redriver *ps5169, unsigned int reg, unsigned int val)
+{
+	int ret;
+
+	ret = regmap_write(ps5169->regmap, reg, val);
+	if (ret)
+		return ret;
+
+	if (val & PS5169_CONFIG_DP_EN_BIT) {
+		ret = regmap_clear_bits(ps5169->regmap, PS5169_AUX_MONITORING_REG,
+					PS5169_AUX_MONITORING_BIT);
+		if (ret)
+			return ret;
+		ret = regmap_set_bits(ps5169->regmap, PS5169_HPD_LEVEL_REG,
+					PS5169_HPD_LEVEL_BIT);
+	} else {
+		ret = regmap_set_bits(ps5169->regmap, PS5169_AUX_MONITORING_REG,
+					PS5169_AUX_MONITORING_BIT);
+		if (ret)
+			return ret;
+		ret = regmap_clear_bits(ps5169->regmap, PS5169_HPD_LEVEL_REG,
+					PS5169_HPD_LEVEL_BIT);
+	}
+	if (ret)
+		return ret;
+
+	if (!ps5169->tune_lfps)
+		return 0;
+
+	if (val & PS5169_CONFIG_USB3_EN_BIT) {
+		ret = regmap_set_bits(ps5169->regmap, PS5169_USB_RX1_LFPS_REG,
+					PS5169_USB_RX_LFPS_50_OHM_BIT);
+		if (ret)
+			return ret;
+		return regmap_set_bits(ps5169->regmap, PS5169_USB_RX2_LFPS_REG,
+					  PS5169_USB_RX_LFPS_50_OHM_BIT);
+	}
+
+	ret = regmap_clear_bits(ps5169->regmap, PS5169_USB_RX1_LFPS_REG,
+				PS5169_USB_RX_LFPS_50_OHM_BIT);
+	if (ret)
+		return ret;
+	return regmap_clear_bits(ps5169->regmap, PS5169_USB_RX2_LFPS_REG,
+				 PS5169_USB_RX_LFPS_50_OHM_BIT);
+}
+
+static int ps5169_set(struct redriver *ps5169)
+{
+	bool reverse = (ps5169->orientation == TYPEC_ORIENTATION_REVERSE);
+	unsigned int val = PS5169_CONFIG_BASE_BIT;
+
+	switch (ps5169->mode) {
+	case TYPEC_STATE_SAFE:
+		return ps5169_write(ps5169, PS5169_CONFIG_REG, val);
+
+	case TYPEC_STATE_USB:
+		val |= PS5169_CONFIG_USB3_EN_BIT;
+		if (reverse)
+			val |= PS5169_CONFIG_REVERSE_BIT;
+		return ps5169_write(ps5169, PS5169_CONFIG_REG, val);
+
+	default:
+		if (ps5169->svid != USB_TYPEC_DP_SID)
+			return -EINVAL;
+
+		break;
+	}
+
+	switch (ps5169->mode) {
+	case TYPEC_DP_STATE_C:
+	case TYPEC_DP_STATE_E:
+		val |= PS5169_CONFIG_DP_EN_BIT;
+		if (reverse)
+			val |= PS5169_CONFIG_REVERSE_BIT;
+		return ps5169_write(ps5169, PS5169_CONFIG_REG, val);
+
+	case TYPEC_DP_STATE_D:
+		val |= PS5169_CONFIG_DP_EN_BIT | PS5169_CONFIG_USB3_EN_BIT;
+		if (reverse)
+			val |= PS5169_CONFIG_REVERSE_BIT;
+		return ps5169_write(ps5169, PS5169_CONFIG_REG, val);
+
+	default:
+		return -EOPNOTSUPP;
+	}
+}
+
+static int ps5169_switch_set(struct typec_switch_dev *sw, enum typec_orientation orientation)
+{
+	struct redriver *ps5169 = typec_switch_get_drvdata(sw);
+	enum typec_orientation old_orientation;
+	int ret;
+
+	mutex_lock(&ps5169->lock);
+	ret = typec_switch_set(ps5169->typec_switch, orientation);
+	if (ret)
+		goto unlock;
+
+	if (ps5169->hw_valid && ps5169->orientation == orientation)
+		goto unlock;
+
+	old_orientation = ps5169->orientation;
+	ps5169->orientation = orientation;
+	ret = ps5169_set(ps5169);
+	if (ret) {
+		ps5169->orientation = old_orientation;
+		ps5169->hw_valid = false;
+		/* Do not conceal the original hardware error with rollback errors. */
+		typec_switch_set(ps5169->typec_switch, old_orientation);
+	} else {
+		ps5169->hw_valid = true;
+	}
+
+unlock:
+	mutex_unlock(&ps5169->lock);
+	return ret;
+}
+
+static int ps5169_retimer_set(struct typec_retimer *retimer, struct typec_retimer_state *state)
+{
+	struct redriver *ps5169 = typec_retimer_get_drvdata(retimer);
+	struct typec_mux_state mux_state = {
+		.alt = state->alt,
+		.data = state->data,
+		.mode = state->mode,
+	};
+	unsigned int old_svid, new_svid = state->alt ? state->alt->svid : 0;
+	unsigned long old_mode;
+	bool changed;
+	int ret;
+
+	mutex_lock(&ps5169->lock);
+	old_mode = ps5169->mode;
+	old_svid = ps5169->svid;
+	changed = !ps5169->hw_valid || old_mode != state->mode ||
+		  old_svid != new_svid;
+	if (changed) {
+		ps5169->mode = state->mode;
+		ps5169->svid = new_svid;
+		ret = ps5169_set(ps5169);
+		if (ret) {
+			ps5169->mode = old_mode;
+			ps5169->svid = old_svid;
+			ps5169->hw_valid = false;
+			goto unlock;
+		}
+	}
+
+	/* Keep the downstream mux error visible and the local state retryable. */
+	ret = typec_mux_set(ps5169->typec_mux, &mux_state);
+	if (ret) {
+		ps5169->mode = old_mode;
+		ps5169->svid = old_svid;
+		if (changed)
+			ps5169_set(ps5169); /* Best-effort hardware rollback. */
+		ps5169->hw_valid = false;
+		goto unlock;
+	}
+
+	ps5169->hw_valid = true;
+unlock:
+	mutex_unlock(&ps5169->lock);
+	return ret;
+}
+
+static int ps5169_eq_from_dt(const struct device *dev, const struct ps5169_eq_data *data,
+			     unsigned int *val)
+{
+	int ret;
+	u32 db[2];
+	unsigned int i;
+
+	if (device_property_present(dev, data->propname)) {
+		/* Read property */
+		ret = device_property_read_u32_array(dev, data->propname, db, ARRAY_SIZE(db));
+		if (ret) {
+			dev_err(dev, "Failed to read %s\n", data->propname);
+			return ret;
+		}
+
+		/* Map to level */
+		for (i = 0; i < data->nlevels; i++) {
+			if (db[0] == data->db[i].major && db[1] == data->db[i].minor) {
+				*val = i;
+				return 0;
+			}
+		}
+
+		/* Invalid dB in property */
+		dev_err(dev, "%s out of range\n", data->propname);
+		return -EINVAL;
+	}
+
+	/* A redriver is present for a reason, so raise a warning if property is not present */
+	dev_warn(dev, "Missing %s property\n", data->propname);
+	*val = U32_MAX;
+	return 0;
+}
+
+static int ps5169_init(struct redriver *ps5169)
+{
+	int i, ret;
+
+	/* The stock profile already defines all EQ and gain-related registers. */
+	if (ps5169->oneli_profile)
+		return ps5169_apply_oneli_profile(ps5169->regmap);
+
+	if (ps5169->dp_eq_level != U32_MAX)
+		for (i = 0; i < PS5169_DP_EQ_REG_COUNT; i++) {
+			ret = regmap_update_bits(ps5169->regmap, ps5169_dp_eq_reg[i],
+					 ps5169_dp_eq_mask[i],
+					 ps5169_dp_eq_val[ps5169->dp_eq_level][i]);
+			if (ret)
+				return ret;
+		}
+
+	if (ps5169->usb_rx_eq_level != U32_MAX)
+		for (i = 0; i < PS5169_USB_RX_EQ_REG_COUNT; i++) {
+			ret = regmap_update_bits(ps5169->regmap, ps5169_usb_rx_eq_reg[i],
+					 ps5169_usb_rx_eq_mask[i],
+					 ps5169_usb_rx_eq_val[ps5169->usb_rx_eq_level][i]);
+			if (ret)
+				return ret;
+		}
+
+	if (ps5169->usb_tx_eq_level != U32_MAX)
+		for (i = 0; i < PS5169_USB_TX_EQ_REG_COUNT; i++) {
+			ret = regmap_update_bits(ps5169->regmap, ps5169_usb_tx_eq_reg[i],
+					 ps5169_usb_tx_eq_mask[i],
+					 ps5169_usb_tx_eq_val[ps5169->usb_tx_eq_level][i]);
+			if (ret)
+				return ret;
+		}
+
+	ret = regmap_assign_bits(ps5169->regmap, PS5169_GAIN_REG,
+				 PS5169_GAIN_DP_BIT, ps5169->dp_set_gain);
+	if (ret)
+		return ret;
+	ret = regmap_assign_bits(ps5169->regmap, PS5169_GAIN_REG,
+				 PS5169_GAIN_USB_RX_BIT, ps5169->usb_rx_set_gain);
+	if (ret)
+		return ret;
+	return regmap_assign_bits(ps5169->regmap, PS5169_GAIN_REG,
+				  PS5169_GAIN_USB_TX_BIT, ps5169->usb_tx_set_gain);
+}
+
+static int ps5169_probe(struct i2c_client *client)
+{
+	struct redriver *ps5169;
+	struct device *dev = &client->dev;
+	int ret;
+	__le16 chip_id, chip_revision;
+	struct typec_switch_desc switch_desc = { };
+	struct typec_retimer_desc retimer_desc = { };
+
+	ps5169 = devm_kzalloc(dev, sizeof(*ps5169), GFP_KERNEL);
+	if (!ps5169)
+		return -ENOMEM;
+
+	mutex_init(&ps5169->lock);
+
+	ps5169->supplies[0].supply = "vcc";
+	ps5169->supplies[1].supply = "vio";
+	ret = devm_regulator_bulk_get(dev, ARRAY_SIZE(ps5169->supplies),
+				       ps5169->supplies);
+	if (ret)
+		return dev_err_probe(dev, ret, "Failed to get vcc/vio supplies\n");
+
+
+	/*
+	 * Motorola oneli drives GPIO19 as a persistent active-high enable,
+	 * not the reset pulse used by the original upstream reference.
+	 * Only one GPIO is allowed by the binding.
+	 */
+	ps5169->enable_gpio = devm_gpiod_get_optional(dev, "enable", GPIOD_OUT_LOW);
+	if (IS_ERR(ps5169->enable_gpio))
+		return dev_err_probe(dev, PTR_ERR(ps5169->enable_gpio),
+				     "Failed to get enable-gpios\n");
+
+	if (!ps5169->enable_gpio) {
+		ps5169->reset_gpio = devm_gpiod_get(dev, "reset", GPIOD_OUT_LOW);
+		if (IS_ERR(ps5169->reset_gpio))
+			return dev_err_probe(dev, PTR_ERR(ps5169->reset_gpio),
+					     "Failed to get reset-gpios\n");
+	}
+
+	ps5169->regmap = devm_regmap_init_i2c(client, &ps5169_regmap);
+	if (IS_ERR(ps5169->regmap))
+		return dev_err_probe(dev, PTR_ERR(ps5169->regmap), "Failed to initialize regmap\n");
+
+	ps5169->typec_switch = typec_switch_get(dev);
+	if (IS_ERR(ps5169->typec_switch))
+		return dev_err_probe(dev, PTR_ERR(ps5169->typec_switch),
+				     "Failed to get orientation-switch\n");
+
+	ps5169->typec_mux = typec_mux_get(dev);
+	if (IS_ERR(ps5169->typec_mux)) {
+		ret = dev_err_probe(dev, PTR_ERR(ps5169->typec_mux), "Failed to get mode-switch\n");
+		goto switch_put;
+	}
+
+	ret = regulator_bulk_enable(ARRAY_SIZE(ps5169->supplies), ps5169->supplies);
+	if (ret) {
+		dev_err(dev, "Failed to enable vcc/vio supplies\n");
+		goto mux_put;
+	}
+
+	if (ps5169->enable_gpio) {
+		gpiod_set_value_cansleep(ps5169->enable_gpio, 1);
+		msleep(10);
+	} else {
+		/* Original upstream reset sequence, for reset-gpios boards only. */
+		gpiod_set_value_cansleep(ps5169->reset_gpio, 1);
+		usleep_range(1000, 1500);
+		gpiod_set_value_cansleep(ps5169->reset_gpio, 0);
+		usleep_range(10000, 11000);
+	}
+
+	ret = regmap_raw_read(ps5169->regmap, PS5169_CHIP_ID_REG, &chip_id, sizeof(chip_id));
+	if (ret) {
+		dev_err(dev, "Failed to read chip ID\n");
+		goto vcc_disable;
+	}
+
+	/* Compare chip IDs */
+	if (le16_to_cpu(chip_id) != PS5169_CHIP_ID_VAL) {
+		dev_err(dev, "Unexpected chip ID 0x%04x\n", le16_to_cpu(chip_id));
+		ret = -EINVAL;
+		goto vcc_disable;
+	}
+
+	/* Read chip revision */
+	ret = regmap_raw_read(ps5169->regmap, PS5169_CHIP_REVISION_REG, &chip_revision,
+			      sizeof(chip_revision));
+	if (ret) {
+		dev_err(dev, "Failed to read chip revision\n");
+		goto vcc_disable;
+	}
+	dev_dbg(dev, "Found PS5169 with chip revision 0x%04x\n",
+		le16_to_cpu(chip_revision));
+
+	ps5169->oneli_profile =
+		of_device_is_compatible(dev->of_node, "motorola,oneli-ps5169");
+	if (ps5169->oneli_profile) {
+		/*
+		 * The 27-register OEM baseline is indivisible. Generic EQ/gain
+		 * properties cannot override or replace its unclassified fields.
+		 */
+		if (device_property_present(dev, "parade,dp-eq-db") ||
+		    device_property_present(dev, "parade,usb-rx-eq-db") ||
+		    device_property_present(dev, "parade,usb-tx-eq-db") ||
+		    device_property_present(dev, "parade,dp-set-gain") ||
+		    device_property_present(dev, "parade,usb-rx-set-gain") ||
+		    device_property_present(dev, "parade,usb-tx-set-gain") ||
+		    device_property_present(dev, "parade,fine-tune-lfps-swing")) {
+			ret = dev_err_probe(dev, -EINVAL,
+				"oneli profile forbids generic EQ/gain/LFPS overrides\n");
+			goto vcc_disable;
+		}
+	} else {
+		/* DP equalization */
+	ret = ps5169_eq_from_dt(dev, &ps5169_dp_eq_data, &(ps5169->dp_eq_level));
+	if (ret)
+		goto vcc_disable;
+
+	/* USB RX equalization */
+	ret = ps5169_eq_from_dt(dev, &ps5169_usb_rx_eq_data, &(ps5169->usb_rx_eq_level));
+	if (ret)
+		goto vcc_disable;
+
+	/* USB TX equalization */
+	ret = ps5169_eq_from_dt(dev, &ps5169_usb_tx_eq_data, &(ps5169->usb_tx_eq_level));
+	if (ret)
+		goto vcc_disable;
+
+	/* Read properties from DT */
+	ps5169->tune_lfps = device_property_read_bool(dev, "parade,fine-tune-lfps-swing");
+
+	ps5169->dp_set_gain = device_property_read_bool(dev, "parade,dp-set-gain");
+	ps5169->usb_rx_set_gain = device_property_read_bool(dev, "parade,usb-rx-set-gain");
+	ps5169->usb_tx_set_gain = device_property_read_bool(dev, "parade,usb-tx-set-gain");
+	} /* Non-oneli generic EQ profile */
+
+	ret = drm_aux_bridge_register(dev);
+	if (ret) {
+		dev_err(dev, "Failed to register aux_bridge\n");
+		goto vcc_disable;
+	}
+
+	ps5169->mode = TYPEC_STATE_SAFE;
+	ps5169->orientation = TYPEC_ORIENTATION_NONE;
+
+	/*
+	 * Finish the register profile and SAFE mode before publishing either
+	 * switch callback. In particular, callbacks must never observe
+	 * partially programmed OEM EQ / profile registers at probe time.
+	 */
+	ret = ps5169_init(ps5169);
+	if (ret) {
+		dev_err(dev, "Failed to initialize PS5169 register profile: %d\n", ret);
+		goto vcc_disable;
+	}
+	ret = ps5169_set(ps5169);
+	if (ret) {
+		dev_err(dev, "Failed to program initial safe mode: %d\n", ret);
+		goto vcc_disable;
+	}
+	ps5169->hw_valid = true;
+
+	/* orientation-switch */
+	switch_desc.drvdata = ps5169;
+	switch_desc.fwnode = dev_fwnode(dev);
+	switch_desc.set = ps5169_switch_set;
+
+	ps5169->sw = typec_switch_register(dev, &switch_desc);
+	if (IS_ERR(ps5169->sw)) {
+		ret = dev_err_probe(dev, PTR_ERR(ps5169->sw), "Failed to register switch\n");
+		goto vcc_disable;
+	}
+
+	/* retimer-switch */
+	retimer_desc.drvdata = ps5169;
+	retimer_desc.fwnode = dev_fwnode(dev);
+	retimer_desc.set = ps5169_retimer_set;
+
+	ps5169->retimer = typec_retimer_register(dev, &retimer_desc);
+	if (IS_ERR(ps5169->retimer)) {
+		ret = dev_err_probe(dev, PTR_ERR(ps5169->retimer), "Failed to register retimer\n");
+		goto switch_unregister;
+	}
+
+	i2c_set_clientdata(client, ps5169);
+
+	return 0;
+
+switch_unregister:
+	typec_switch_unregister(ps5169->sw);
+
+vcc_disable:
+	if (ps5169->enable_gpio)
+		gpiod_set_value_cansleep(ps5169->enable_gpio, 0);
+	regulator_bulk_disable(ARRAY_SIZE(ps5169->supplies), ps5169->supplies);
+
+mux_put:
+	typec_mux_put(ps5169->typec_mux);
+switch_put:
+	typec_switch_put(ps5169->typec_switch);
+
+	return ret;
+}
+
+static void ps5169_remove(struct i2c_client *client)
+{
+	struct redriver *ps5169 = i2c_get_clientdata(client);
+
+	typec_retimer_unregister(ps5169->retimer);
+	typec_switch_unregister(ps5169->sw);
+
+	if (ps5169->enable_gpio)
+		gpiod_set_value_cansleep(ps5169->enable_gpio, 0);
+	regulator_bulk_disable(ARRAY_SIZE(ps5169->supplies), ps5169->supplies);
+
+	typec_mux_put(ps5169->typec_mux);
+	typec_switch_put(ps5169->typec_switch);
+}
+
+static const struct of_device_id ps5169_of_match_table[] = {
+	{ .compatible = "parade,ps5169" },
+	{ },
+};
+MODULE_DEVICE_TABLE(of, ps5169_of_match_table);
+
+static struct i2c_driver ps5169_driver = {
+	.driver = {
+		.name = "ps5169",
+		.of_match_table = ps5169_of_match_table,
+	},
+	.probe = ps5169_probe,
+	.remove = ps5169_remove,
+};
+
+module_i2c_driver(ps5169_driver);
+
+MODULE_AUTHOR("Esteban Urrutia <esteuwu@proton.me>");
+MODULE_DESCRIPTION("Driver for Parade PS5169 USB Type-C linear redriver");
+MODULE_LICENSE("GPL");
