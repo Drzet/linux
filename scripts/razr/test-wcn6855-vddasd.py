@@ -90,7 +90,7 @@ static struct pwrseq_device pwrseq;
 static struct platform_device pdev;
 static const struct pwrseq_target_data *pwrseq_qcom_wcn6855_targets[] = {NULL};
 static const struct pwrseq_target_data *pwrseq_qcom_wcn_targets[] = {NULL};
-static int checks, cases, puts, requested, get_calls, registered, reg_on, ena_calls, dis_calls;
+static int checks, cases, put_count, requested, get_calls, registered, reg_on, ena_calls, dis_calls;
 static int fail_index = -1, fail_get, fail_gpio;
 static bool supply_property, malformed, use_wcn6750;
 static struct pwrseq_qcom_wcn_ctx *current_ctx;
@@ -107,7 +107,7 @@ static bool of_property_present(const struct device_node *n, const char *key)
 static struct device_node *of_parse_phandle(const struct device_node *n, const char *key, int arg)
 { CHECK(n==&node); CHECK(!strcmp(key,"vddasd-supply")); CHECK(arg==0); return malformed?NULL:&node; }
 static void of_node_put(struct device_node *n)
-{ CHECK(n==&node); ++puts; }
+{ CHECK(n==&node); ++put_count; }
 static int dev_err_probe(struct device *d, int err, const char *fmt, ...)
 { (void)d; (void)fmt; return err; }
 static int devm_regulator_bulk_get(struct device *d, int count, struct regulator_bulk_data *r)
@@ -161,7 +161,7 @@ static void reset(bool present, bool bad_phandle, bool wcn6750)
     supply_property=present; malformed=bad_phandle; use_wcn6750=wcn6750;
     memset(&pdev,0,sizeof(pdev)); pdev.dev.of_node=&node;
     memset(&pwrseq,0,sizeof(pwrseq)); current_ctx=NULL;
-    puts=requested=get_calls=registered=reg_on=ena_calls=dis_calls=0;
+    put_count=requested=get_calls=registered=reg_on=ena_calls=dis_calls=0;
     fail_get=fail_gpio=0; fail_index=-1;
 }
 static int probe(void) { return pwrseq_qcom_wcn_probe(&pdev); }
@@ -190,7 +190,7 @@ static void both_orders(bool present, int first)
 {
     reset(present,false,false);
     CHECK(probe()==0); CHECK(requested==(present?11:10));
-    CHECK(get_calls==1 && registered==1 && puts==(present?1:0));
+    CHECK(get_calls==1 && registered==1 && put_count==(present?1:0));
     shared_users=0; active[0]=active[1]=false;
     CHECK(turn_on(first)==0); CHECK(ena_calls==1);
     CHECK(turn_on(1-first)==0); CHECK(ena_calls==1);
@@ -214,9 +214,9 @@ static void failed_second_target(bool present)
 static void lookup_errors(void)
 {
     reset(true,true,false);
-    CHECK(probe()==-EINVAL); CHECK(!get_calls && !registered && !puts); ++cases;
+    CHECK(probe()==-EINVAL); CHECK(!get_calls && !registered && !put_count); ++cases;
     reset(true,false,false); fail_get=-EPROBE_DEFER;
-    CHECK(probe()==-EPROBE_DEFER); CHECK(get_calls==1 && !registered && puts==1); ++cases;
+    CHECK(probe()==-EPROBE_DEFER); CHECK(get_calls==1 && !registered && put_count==1); ++cases;
     reset(true,false,false); fail_get=-ENODEV;
     CHECK(probe()==-ENODEV); CHECK(get_calls==1 && !registered); ++cases;
     reset(true,false,false); fail_gpio=1;
@@ -240,7 +240,7 @@ static void other_variant(void)
     CHECK(probe()==0);
     /* WCN6750 has its own mandatory vddasd inside its original seven rails;
      * the new WCN6855-only optional field must have no effect. */
-    CHECK(requested==7 && puts==0 && registered==1);
+    CHECK(requested==7 && put_count==0 && registered==1);
     CHECK(pwrseq_qcom_wcn_vregs_enable(&pwrseq)==0);
     CHECK(reg_on==7);
     CHECK(pwrseq_qcom_wcn_vregs_disable(&pwrseq)==0); ++cases;

@@ -462,7 +462,8 @@ static int pwrseq_qcom_wcn_probe(struct platform_device *pdev)
 	struct device *dev = &pdev->dev;
 	struct pwrseq_qcom_wcn_ctx *ctx;
 	struct pwrseq_config config;
-	int i, ret;
+	size_t i;
+	int ret;
 
 	ctx = devm_kzalloc(dev, sizeof(*ctx), GFP_KERNEL);
 	if (!ctx)
